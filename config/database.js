@@ -49,7 +49,7 @@ const initializeDatabase = async () => {
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS invoice_items (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        invoice_number VARCHAR(20) NOT NULL,
+        invoice_number VARCHAR(50) NOT NULL,
         menu_item_id VARCHAR(36) NOT NULL,
         item_name VARCHAR(255) NOT NULL,
         price DECIMAL(10,2) NOT NULL,

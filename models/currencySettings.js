@@ -6,7 +6,7 @@ class CurrencySettings {
       const [rows] = await pool.execute(
         'SELECT * FROM currency_settings WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1'
       );
-      return rows[0] || { currency_code: 'USD', currency_symbol: '$', currency_name: 'US Dollar' };
+      return rows[0] || { currency_code: 'INR', currency_symbol: '₹', currency_name: 'Indian Rupee' };
     } catch (error) {
       console.error('Error getting current currency settings:', error);
       throw error;
@@ -45,8 +45,8 @@ class CurrencySettings {
 
   static async getAvailableCurrencies() {
     return [
-      { code: 'USD', symbol: '$', name: 'US Dollar' },
       { code: 'INR', symbol: '₹', name: 'Indian Rupee' },
+      { code: 'USD', symbol: '$', name: 'US Dollar' },
       { code: 'EUR', symbol: '€', name: 'Euro' },
       { code: 'GBP', symbol: '£', name: 'British Pound' },
       { code: 'CAD', symbol: 'C$', name: 'Canadian Dollar' },

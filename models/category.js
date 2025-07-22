@@ -113,7 +113,7 @@ class Category {
           c.is_active,
           COUNT(m.id) as item_count
         FROM categories c
-        LEFT JOIN menu_items m ON c.id = m.category_id AND m.is_active = TRUE
+        LEFT JOIN menu_items m ON c.id = m.category_id AND m.is_available = TRUE
         WHERE c.is_active = TRUE
         GROUP BY c.id, c.name, c.description, c.sort_order, c.is_active
         ORDER BY c.sort_order, c.name

@@ -11,14 +11,14 @@ class MenuItem {
           m.name,
           m.description,
           m.price,
-          m.is_active,
+          m.is_available,
           m.sort_order,
           m.created_at,
           m.updated_at,
           c.name as category_name
         FROM menu_items m
         LEFT JOIN categories c ON m.category_id = c.id
-        WHERE m.is_active = TRUE
+        WHERE m.is_available = TRUE
         ORDER BY c.sort_order, m.sort_order, m.name
       `);
       
@@ -47,7 +47,7 @@ class MenuItem {
           m.price,
           m.sort_order
         FROM categories c
-        LEFT JOIN menu_items m ON c.id = m.category_id AND m.is_active = TRUE
+        LEFT JOIN menu_items m ON c.id = m.category_id AND m.is_available = TRUE
         WHERE c.is_active = TRUE
         ORDER BY c.sort_order, m.sort_order, m.name
       `);
@@ -91,7 +91,7 @@ class MenuItem {
           m.name,
           m.description,
           m.price,
-          m.is_active,
+          m.is_available,
           m.sort_order,
           m.created_at,
           m.updated_at,
@@ -138,15 +138,15 @@ class MenuItem {
   // Update menu item
   static async update(id, menuItemData) {
     try {
-      const { category_id, name, description, price, sort_order, is_active } = menuItemData;
+      const { category_id, name, description, price, sort_order, is_available } = menuItemData;
       
       if (!category_id) {
         throw new Error('Category ID is required');
       }
       
       const [result] = await pool.execute(
-        'UPDATE menu_items SET category_id = ?, name = ?, description = ?, price = ?, sort_order = ?, is_active = ? WHERE id = ?',
-        [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0, is_active, id]
+        'UPDATE menu_items SET category_id = ?, name = ?, description = ?, price = ?, sort_order = ?, is_available = ? WHERE id = ?',
+        [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0, is_available, id]
       );
       
       if (result.affectedRows === 0) {
@@ -163,7 +163,7 @@ class MenuItem {
   static async delete(id) {
     try {
       const [result] = await pool.execute(
-        'UPDATE menu_items SET is_active = FALSE WHERE id = ?',
+        'UPDATE menu_items SET is_available = FALSE WHERE id = ?',
         [id]
       );
       
@@ -187,14 +187,14 @@ class MenuItem {
           m.name,
           m.description,
           m.price,
-          m.is_active,
+          m.is_available,
           m.sort_order,
           m.created_at,
           m.updated_at,
           c.name as category_name
         FROM menu_items m
         LEFT JOIN categories c ON m.category_id = c.id
-        WHERE m.category_id = ? AND m.is_active = TRUE
+        WHERE m.category_id = ? AND m.is_available = TRUE
         ORDER BY m.sort_order, m.name
       `, [categoryId]);
       

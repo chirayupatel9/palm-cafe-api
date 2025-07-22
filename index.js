@@ -14,6 +14,7 @@ const Invoice = require('./models/invoice');
 const TaxSettings = require('./models/taxSettings');
 const CurrencySettings = require('./models/currencySettings');
 const User = require('./models/user');
+const Inventory = require('./models/inventory');
 const { auth, adminAuth, JWT_SECRET } = require('./middleware/auth');
 
 const app = express();
@@ -880,6 +881,217 @@ app.get('/api/statistics', async (req, res) => {
   }
 });
 
+// Inventory Management Routes
+
+// Get all inventory items
+app.get('/api/inventory', auth, async (req, res) => {
+  try {
+    const inventory = await Inventory.getAll();
+    res.json(inventory);
+  } catch (error) {
+    console.error('Error fetching inventory:', error);
+    res.status(500).json({ error: 'Failed to fetch inventory' });
+  }
+});
+
+// Get inventory item by ID
+app.get('/api/inventory/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const item = await Inventory.getById(id);
+    
+    if (!item) {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+    
+    res.json(item);
+  } catch (error) {
+    console.error('Error fetching inventory item:', error);
+    res.status(500).json({ error: 'Failed to fetch inventory item' });
+  }
+});
+
+// Create new inventory item
+app.post('/api/inventory', auth, async (req, res) => {
+  try {
+    const { name, category, quantity, unit, cost_per_unit, supplier, reorder_level, description } = req.body;
+    
+    if (!name || !category || !quantity || !unit) {
+      return res.status(400).json({ error: 'Name, category, quantity, and unit are required' });
+    }
+
+    const newItem = await Inventory.create({
+      name,
+      category,
+      quantity: parseFloat(quantity),
+      unit,
+      cost_per_unit: cost_per_unit ? parseFloat(cost_per_unit) : null,
+      supplier,
+      reorder_level: reorder_level ? parseFloat(reorder_level) : null,
+      description
+    });
+
+    res.status(201).json(newItem);
+  } catch (error) {
+    console.error('Error creating inventory item:', error);
+    res.status(500).json({ error: 'Failed to create inventory item' });
+  }
+});
+
+// Update inventory item
+app.put('/api/inventory/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, category, quantity, unit, cost_per_unit, supplier, reorder_level, description } = req.body;
+    
+    if (!name || !category || !quantity || !unit) {
+      return res.status(400).json({ error: 'Name, category, quantity, and unit are required' });
+    }
+
+    const updatedItem = await Inventory.update(id, {
+      name,
+      category,
+      quantity: parseFloat(quantity),
+      unit,
+      cost_per_unit: cost_per_unit ? parseFloat(cost_per_unit) : null,
+      supplier,
+      reorder_level: reorder_level ? parseFloat(reorder_level) : null,
+      description
+    });
+
+    res.json(updatedItem);
+  } catch (error) {
+    console.error('Error updating inventory item:', error);
+    res.status(500).json({ error: 'Failed to update inventory item' });
+  }
+});
+
+// Delete inventory item
+app.delete('/api/inventory/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await Inventory.delete(id);
+    res.json({ message: 'Inventory item deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting inventory item:', error);
+    res.status(500).json({ error: 'Failed to delete inventory item' });
+  }
+});
+
+// Get inventory categories
+app.get('/api/inventory/categories', auth, async (req, res) => {
+  try {
+    const categories = await Inventory.getCategories();
+    res.json(categories);
+  } catch (error) {
+    console.error('Error fetching inventory categories:', error);
+    res.status(500).json({ error: 'Failed to fetch inventory categories' });
+  }
+});
+
+// Update stock quantity
+app.patch('/api/inventory/:id/stock', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quantity } = req.body;
+    
+    if (quantity === undefined || quantity < 0) {
+      return res.status(400).json({ error: 'Valid quantity is required' });
+    }
+
+    await Inventory.updateStock(id, parseFloat(quantity));
+    res.json({ message: 'Stock updated successfully' });
+  } catch (error) {
+    console.error('Error updating stock:', error);
+    res.status(500).json({ error: 'Failed to update stock' });
+  }
+});
+
+// Get low stock items
+app.get('/api/inventory/low-stock', auth, async (req, res) => {
+  try {
+    const lowStockItems = await Inventory.getLowStockItems();
+    res.json(lowStockItems);
+  } catch (error) {
+    console.error('Error fetching low stock items:', error);
+    res.status(500).json({ error: 'Failed to fetch low stock items' });
+  }
+});
+
+// Get out of stock items
+app.get('/api/inventory/out-of-stock', auth, async (req, res) => {
+  try {
+    const outOfStockItems = await Inventory.getOutOfStockItems();
+    res.json(outOfStockItems);
+  } catch (error) {
+    console.error('Error fetching out of stock items:', error);
+    res.status(500).json({ error: 'Failed to fetch out of stock items' });
+  }
+});
+
+// Get inventory statistics
+app.get('/api/inventory/statistics', auth, async (req, res) => {
+  try {
+    const statistics = await Inventory.getStatistics();
+    res.json(statistics);
+  } catch (error) {
+    console.error('Error fetching inventory statistics:', error);
+    res.status(500).json({ error: 'Failed to fetch inventory statistics' });
+  }
+});
+
+// Export inventory to Excel
+app.get('/api/inventory/export', auth, async (req, res) => {
+  try {
+    const { buffer, filename } = await Inventory.exportToExcel();
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (error) {
+    console.error('Error exporting inventory:', error);
+    res.status(500).json({ error: 'Failed to export inventory' });
+  }
+});
+
+// Get inventory import template
+app.get('/api/inventory/template', auth, async (req, res) => {
+  try {
+    const { buffer, filename } = await Inventory.getImportTemplate();
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (error) {
+    console.error('Error generating template:', error);
+    res.status(500).json({ error: 'Failed to generate template' });
+  }
+});
+
+// Import inventory from Excel
+app.post('/api/inventory/import', auth, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const results = await Inventory.importFromExcel(req.file.buffer);
+    
+    res.json({
+      message: 'Import completed',
+      results: {
+        total: results.total,
+        successful: results.successful,
+        failed: results.failed,
+        errors: results.errors
+      }
+    });
+  } catch (error) {
+    console.error('Error importing inventory:', error);
+    res.status(500).json({ error: 'Failed to import inventory' });
+  }
+});
+
 // Health check
 app.get('/api/health', async (req, res) => {
   try {
@@ -908,8 +1120,15 @@ const startServer = async () => {
       process.exit(1);
     }
 
-    // Initialize database tables
-    await initializeDatabase();
+    // Run database migrations
+    try {
+      const { runMigrations } = require('./run-migrations');
+      await runMigrations();
+      console.log('✅ Database migrations completed');
+    } catch (error) {
+      console.error('❌ Database migrations failed:', error);
+      process.exit(1);
+    }
 
     // Start server
     app.listen(PORT, HOST, () => {

@@ -13,11 +13,11 @@ class Invoice {
           i.subtotal,
           i.tax_amount,
           i.tip_amount,
-          i.total,
-          i.date,
+          i.total_amount,
+          i.invoice_date,
           i.created_at
         FROM invoices i
-        ORDER BY i.date DESC
+        ORDER BY i.invoice_date DESC
       `);
 
       // Get items for each invoice
@@ -39,7 +39,7 @@ class Invoice {
             subtotal: parseFloat(invoice.subtotal),
             tax_amount: parseFloat(invoice.tax_amount),
             tip_amount: parseFloat(invoice.tip_amount),
-            total: parseFloat(invoice.total),
+            total_amount: parseFloat(invoice.total_amount),
             items: items.map(item => ({
               ...item,
               price: parseFloat(item.price),
@@ -67,8 +67,8 @@ class Invoice {
           i.subtotal,
           i.tax_amount,
           i.tip_amount,
-          i.total,
-          i.date,
+          i.total_amount,
+          i.invoice_date,
           i.created_at
         FROM invoices i
         WHERE i.invoice_number = ?
@@ -97,7 +97,7 @@ class Invoice {
         subtotal: parseFloat(invoice.subtotal),
         tax_amount: parseFloat(invoice.tax_amount),
         tip_amount: parseFloat(invoice.tip_amount),
-        total: parseFloat(invoice.total),
+        total_amount: parseFloat(invoice.total_amount),
         items: items.map(item => ({
           ...item,
           price: parseFloat(item.price),
@@ -122,7 +122,7 @@ class Invoice {
 
       // Insert invoice
       await connection.execute(`
-        INSERT INTO invoices (invoice_number, customer_name, customer_phone, payment_method, subtotal, tax_amount, tip_amount, total, date)
+        INSERT INTO invoices (invoice_number, customer_name, customer_phone, payment_method, subtotal, tax_amount, tip_amount, total_amount, invoice_date)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [invoiceNumber, customerName, customerPhone, paymentMethod, subtotal, taxAmount, tipAmount, total, mysqlDate]);
 
@@ -145,8 +145,8 @@ class Invoice {
         subtotal: parseFloat(subtotal),
         tax_amount: parseFloat(taxAmount),
         tip_amount: parseFloat(tipAmount),
-        total: parseFloat(total),
-        date
+        total_amount: parseFloat(total),
+        invoice_date: date
       };
     } catch (error) {
       await connection.rollback();
@@ -175,7 +175,7 @@ class Invoice {
   static async getStatistics() {
     try {
       const [totalRevenue] = await pool.execute(`
-        SELECT SUM(total) as totalRevenue
+        SELECT SUM(total_amount) as totalRevenue
         FROM invoices
       `);
 

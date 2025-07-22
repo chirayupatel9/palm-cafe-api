@@ -7,7 +7,9 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "setup": "node setup.js",
-    "create-db": "node create-database.js"
+    "create-db": "node create-database.js",
+    "migrate": "node run-migrations.js",
+    "migrate:status": "node -e \"require('./run-migrations').runMigrations().then(() => console.log('Migrations up to date')).catch(console.error)\""
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -115,7 +115,7 @@ async function createDatabase() {
       CREATE TABLE IF NOT EXISTS invoices (
         id INT AUTO_INCREMENT PRIMARY KEY,
         invoice_number VARCHAR(50) UNIQUE NOT NULL,
-        order_id INT NOT NULL,
+        order_id INT NULL,
         customer_name VARCHAR(200),
         customer_email VARCHAR(200),
         customer_phone VARCHAR(50),
@@ -128,10 +128,25 @@ async function createDatabase() {
         payment_method ENUM('cash', 'card', 'upi', 'online') DEFAULT 'cash',
         invoice_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
     console.log('✅ Invoices table created');
+
+    // Invoice items table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS invoice_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        invoice_number VARCHAR(50) NOT NULL,
+        menu_item_id VARCHAR(36) NOT NULL,
+        item_name VARCHAR(255) NOT NULL,
+        price DECIMAL(10,2) NOT NULL,
+        quantity INT NOT NULL,
+        total DECIMAL(10,2) NOT NULL,
+        FOREIGN KEY (invoice_number) REFERENCES invoices(invoice_number) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    console.log('✅ Invoice items table created');
 
     // Tax settings table
     await connection.query(`
@@ -162,9 +177,9 @@ async function createDatabase() {
     await connection.query(`
       CREATE TABLE IF NOT EXISTS currency_settings (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        currency_code VARCHAR(3) NOT NULL DEFAULT 'USD',
-        currency_symbol VARCHAR(10) NOT NULL DEFAULT '$',
-        currency_name VARCHAR(100) NOT NULL DEFAULT 'US Dollar',
+        currency_code VARCHAR(3) NOT NULL DEFAULT 'INR',
+        currency_symbol VARCHAR(10) NOT NULL DEFAULT '₹',
+        currency_name VARCHAR(100) NOT NULL DEFAULT 'Indian Rupee',
         is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -184,6 +199,24 @@ async function createDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
     console.log('✅ Currency settings history table created');
+
+    // Inventory table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS inventory (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(200) NOT NULL,
+        category VARCHAR(100) NOT NULL,
+        quantity DECIMAL(10,3) NOT NULL DEFAULT 0,
+        unit VARCHAR(50) NOT NULL,
+        cost_per_unit DECIMAL(10,2) DEFAULT NULL,
+        supplier VARCHAR(200) DEFAULT NULL,
+        reorder_level DECIMAL(10,3) DEFAULT NULL,
+        description TEXT DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    console.log('✅ Inventory table created');
 
     // Users table
     await connection.query(`
@@ -221,10 +254,10 @@ async function createDatabase() {
     const [existingCurrency] = await connection.query('SELECT COUNT(*) as count FROM currency_settings');
     if (existingCurrency[0].count === 0) {
       await connection.query(`
-        INSERT INTO currency_settings (currency_code, currency_symbol, currency_name) VALUES ('USD', '$', 'US Dollar')
+        INSERT INTO currency_settings (currency_code, currency_symbol, currency_name) VALUES ('INR', '₹', 'Indian Rupee')
       `);
       await connection.query(`
-        INSERT INTO currency_settings_history (currency_code, currency_symbol, currency_name, changed_by) VALUES ('USD', '$', 'US Dollar', 'system')
+        INSERT INTO currency_settings_history (currency_code, currency_symbol, currency_name, changed_by) VALUES ('INR', '₹', 'Indian Rupee', 'system')
       `);
       console.log('✅ Default currency settings inserted');
     }
@@ -269,16 +302,16 @@ async function createDatabase() {
       categories.forEach(cat => categoryMap[cat.name] = cat.id);
 
       const sampleMenuItems = [
-        { name: 'Espresso', description: 'Single shot of espresso', price: 3.50, category: 'Beverages', sort_order: 1 },
-        { name: 'Cappuccino', description: 'Espresso with steamed milk and foam', price: 4.50, category: 'Beverages', sort_order: 2 },
-        { name: 'Latte', description: 'Espresso with steamed milk', price: 4.00, category: 'Beverages', sort_order: 3 },
-        { name: 'Caesar Salad', description: 'Fresh romaine lettuce with Caesar dressing', price: 8.50, category: 'Appetizers', sort_order: 1 },
-        { name: 'Bruschetta', description: 'Toasted bread with tomatoes and herbs', price: 6.50, category: 'Appetizers', sort_order: 2 },
-        { name: 'Grilled Chicken', description: 'Grilled chicken breast with vegetables', price: 15.00, category: 'Main Course', sort_order: 1 },
-        { name: 'Pasta Carbonara', description: 'Pasta with eggs, cheese, and bacon', price: 12.50, category: 'Main Course', sort_order: 2 },
-        { name: 'Chocolate Cake', description: 'Rich chocolate layer cake', price: 6.00, category: 'Desserts', sort_order: 1 },
-        { name: 'Tiramisu', description: 'Classic Italian dessert', price: 7.50, category: 'Desserts', sort_order: 2 },
-        { name: 'Chef\'s Special', description: 'Daily special dish', price: 18.00, category: 'Specials', sort_order: 1 }
+        { name: 'Espresso', description: 'Single shot of espresso', price: 120.00, category: 'Beverages', sort_order: 1 },
+        { name: 'Cappuccino', description: 'Espresso with steamed milk and foam', price: 150.00, category: 'Beverages', sort_order: 2 },
+        { name: 'Latte', description: 'Espresso with steamed milk', price: 140.00, category: 'Beverages', sort_order: 3 },
+        { name: 'Caesar Salad', description: 'Fresh romaine lettuce with Caesar dressing', price: 280.00, category: 'Appetizers', sort_order: 1 },
+        { name: 'Bruschetta', description: 'Toasted bread with tomatoes and herbs', price: 220.00, category: 'Appetizers', sort_order: 2 },
+        { name: 'Grilled Chicken', description: 'Grilled chicken breast with vegetables', price: 450.00, category: 'Main Course', sort_order: 1 },
+        { name: 'Pasta Carbonara', description: 'Pasta with eggs, cheese, and bacon', price: 380.00, category: 'Main Course', sort_order: 2 },
+        { name: 'Chocolate Cake', description: 'Rich chocolate layer cake', price: 200.00, category: 'Desserts', sort_order: 1 },
+        { name: 'Tiramisu', description: 'Classic Italian dessert', price: 250.00, category: 'Desserts', sort_order: 2 },
+        { name: 'Chef\'s Special', description: 'Daily special dish', price: 550.00, category: 'Specials', sort_order: 1 }
       ];
 
       for (const item of sampleMenuItems) {
