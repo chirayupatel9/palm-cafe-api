@@ -505,18 +505,24 @@ app.put('/api/menu/:id', async (req, res) => {
     const { id } = req.params;
     const { category_id, name, description, price, sort_order, is_active } = req.body;
     
+    console.log('Update menu item request:', { id, category_id, name, description, price, sort_order, is_active });
+    
     if (!category_id || !name || !price) {
       return res.status(400).json({ error: 'Category, name and price are required' });
     }
 
-    const updatedItem = await MenuItem.update(id, {
+    const updateData = {
       category_id,
       name: name.trim(),
       description: description ? description.trim() : '',
       price: parseFloat(price),
       sort_order: sort_order || 0,
-      is_active: is_active !== undefined ? is_active : true
-    });
+      is_available: is_active !== undefined ? is_active : true
+    };
+    
+    console.log('Update data being sent to model:', updateData);
+
+    const updatedItem = await MenuItem.update(id, updateData);
 
     res.json(updatedItem);
   } catch (error) {

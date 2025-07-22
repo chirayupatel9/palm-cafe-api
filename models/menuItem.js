@@ -144,9 +144,17 @@ class MenuItem {
         throw new Error('Category ID is required');
       }
       
+      // Handle undefined values by converting them to null or default values
+      const safeCategoryId = category_id || null;
+      const safeName = name ? name.trim() : '';
+      const safeDescription = description ? description.trim() : '';
+      const safePrice = price ? parseFloat(price) : 0;
+      const safeSortOrder = sort_order || 0;
+      const safeIsAvailable = is_available !== undefined ? is_available : true;
+      
       const [result] = await pool.execute(
         'UPDATE menu_items SET category_id = ?, name = ?, description = ?, price = ?, sort_order = ?, is_available = ? WHERE id = ?',
-        [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0, is_available, id]
+        [safeCategoryId, safeName, safeDescription, safePrice, safeSortOrder, safeIsAvailable, id]
       );
       
       if (result.affectedRows === 0) {
