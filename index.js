@@ -49,7 +49,6 @@ const generatePDF = async (invoice) => {
   let currencySymbol = '₹'; // Default to INR symbol
   try {
     const currencySettings = await CurrencySettings.getCurrent();
-    console.log('Currency settings for PDF:', JSON.stringify(currencySettings, null, 2));
     
     if (currencySettings && currencySettings.currency_symbol) {
       const symbol = String(currencySettings.currency_symbol).trim();
@@ -58,11 +57,9 @@ const generatePDF = async (invoice) => {
       }
     }
     
-    console.log('Final currency symbol being used:', currencySymbol);
-  } catch (error) {
+    } catch (error) {
     console.error('Error fetching currency settings for PDF:', error);
-    console.log('Using fallback currency symbol:', currencySymbol);
-  }
+    }
 
   // Helper function to format currency with symbol
   const formatCurrency = (amount) => {
@@ -81,7 +78,6 @@ const generatePDF = async (invoice) => {
     }
     
     const formatted = `${symbol}${num}`;
-    console.log(`Formatting currency: ${amount} -> ${formatted} (original symbol: ${currencySymbol}, used symbol: ${symbol})`);
     return formatted;
   };
 
@@ -505,24 +501,18 @@ app.put('/api/menu/:id', async (req, res) => {
     const { id } = req.params;
     const { category_id, name, description, price, sort_order, is_active } = req.body;
     
-    console.log('Update menu item request:', { id, category_id, name, description, price, sort_order, is_active });
-    
     if (!category_id || !name || !price) {
       return res.status(400).json({ error: 'Category, name and price are required' });
     }
 
-    const updateData = {
+    const updatedItem = await MenuItem.update(id, {
       category_id,
       name: name.trim(),
       description: description ? description.trim() : '',
       price: parseFloat(price),
       sort_order: sort_order || 0,
       is_available: is_active !== undefined ? is_active : true
-    };
-    
-    console.log('Update data being sent to model:', updateData);
-
-    const updatedItem = await MenuItem.update(id, updateData);
+    });
 
     res.json(updatedItem);
   } catch (error) {
@@ -991,14 +981,11 @@ app.delete('/api/inventory/:id', auth, async (req, res) => {
 
 // Get inventory categories
 app.get('/api/inventory/categories', auth, async (req, res) => {
-  console.log('🔍 Inventory categories endpoint hit');
   try {
-    console.log('📊 Fetching inventory categories...');
     const categories = await Inventory.getCategories();
-    console.log('✅ Categories fetched:', categories);
     res.json(categories);
   } catch (error) {
-    console.error('❌ Error fetching inventory categories:', error);
+    console.error('Error fetching inventory categories:', error);
     res.status(500).json({ error: 'Failed to fetch inventory categories' });
   }
 });
@@ -1106,24 +1093,9 @@ app.post('/api/inventory/import', auth, upload.single('file'), async (req, res) 
   }
 });
 
-// Test endpoint
-app.get('/api/test', (req, res) => {
-  res.json({ message: 'Server is running!', timestamp: new Date().toISOString() });
-});
 
-// Test inventory categories without auth (for debugging)
-app.get('/api/inventory/categories-test', async (req, res) => {
-  console.log('🔍 Inventory categories test endpoint hit (no auth)');
-  try {
-    console.log('📊 Fetching inventory categories...');
-    const categories = await Inventory.getCategories();
-    console.log('✅ Categories fetched:', categories);
-    res.json(categories);
-  } catch (error) {
-    console.error('❌ Error fetching inventory categories:', error);
-    res.status(500).json({ error: 'Failed to fetch inventory categories', details: error.message });
-  }
-});
+
+
 
 // Get inventory item by ID (must come after specific routes)
 app.get('/api/inventory/:id', auth, async (req, res) => {
@@ -1170,15 +1142,7 @@ const startServer = async () => {
       process.exit(1);
     }
 
-    // Run database migrations
-    try {
-      const { runMigrations } = require('./run-migrations');
-      await runMigrations();
-      console.log('✅ Database migrations completed');
-    } catch (error) {
-      console.error('❌ Database migrations failed:', error);
-      process.exit(1);
-    }
+    
 
     // Start server
     app.listen(PORT, HOST, () => {
