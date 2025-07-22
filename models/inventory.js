@@ -159,13 +159,19 @@ class Inventory {
   static async getCategories() {
     try {
       const [rows] = await pool.execute(`
-        SELECT DISTINCT category 
+        SELECT DISTINCT 
+          category,
+          COUNT(*) as item_count
         FROM inventory 
         WHERE category IS NOT NULL AND category != ''
+        GROUP BY category
         ORDER BY category ASC
       `);
 
-      return rows.map(row => row.category);
+      return rows.map(row => ({
+        name: row.category,
+        item_count: parseInt(row.item_count)
+      }));
     } catch (error) {
       throw new Error(`Error fetching inventory categories: ${error.message}`);
     }

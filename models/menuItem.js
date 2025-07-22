@@ -118,18 +118,18 @@ class MenuItem {
   // Create new menu item
   static async create(menuItemData) {
     try {
-      const { id, category_id, name, description, price, sort_order } = menuItemData;
+      const { category_id, name, description, price, sort_order } = menuItemData;
       
       if (!category_id) {
         throw new Error('Category ID is required');
       }
       
       const [result] = await pool.execute(
-        'INSERT INTO menu_items (id, category_id, name, description, price, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
-        [id, category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0]
+        'INSERT INTO menu_items (category_id, name, description, price, sort_order) VALUES (?, ?, ?, ?, ?)',
+        [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0]
       );
       
-      return await this.getById(id);
+      return await this.getById(result.insertId);
     } catch (error) {
       throw new Error(`Error creating menu item: ${error.message}`);
     }
@@ -217,8 +217,18 @@ class MenuItem {
       const results = [];
       for (const item of items) {
         try {
-          const result = await this.create(item);
-          results.push({ success: true, item: result });
+          const { category_id, name, description, price, sort_order } = item;
+          
+          if (!category_id) {
+            throw new Error('Category ID is required');
+          }
+          
+          const [result] = await connection.execute(
+            'INSERT INTO menu_items (category_id, name, description, price, sort_order) VALUES (?, ?, ?, ?, ?)',
+            [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0]
+          );
+          
+          results.push({ success: true, item: { ...item, insertId: result.insertId } });
         } catch (error) {
           results.push({ success: false, item, error: error.message });
         }
