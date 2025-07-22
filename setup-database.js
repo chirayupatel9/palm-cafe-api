@@ -84,7 +84,7 @@ async function createDatabase() {
         tip_amount DECIMAL(10,2) DEFAULT 0,
         final_amount DECIMAL(10,2) NOT NULL,
         status ENUM('pending', 'preparing', 'ready', 'completed', 'cancelled') DEFAULT 'pending',
-        payment_method ENUM('cash', 'card', 'online') DEFAULT 'cash',
+        payment_method ENUM('cash', 'card', 'upi', 'online') DEFAULT 'cash',
         notes TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -125,7 +125,7 @@ async function createDatabase() {
         total_amount DECIMAL(10,2) NOT NULL,
         tax_rate DECIMAL(5,2) DEFAULT 0,
         tax_name VARCHAR(100) DEFAULT 'Tax',
-        payment_method ENUM('cash', 'card', 'online') DEFAULT 'cash',
+        payment_method ENUM('cash', 'card', 'upi', 'online') DEFAULT 'cash',
         invoice_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE

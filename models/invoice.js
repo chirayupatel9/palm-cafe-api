@@ -9,6 +9,7 @@ class Invoice {
           i.invoice_number,
           i.customer_name,
           i.customer_phone,
+          i.payment_method,
           i.subtotal,
           i.tax_amount,
           i.tip_amount,
@@ -62,6 +63,7 @@ class Invoice {
           i.invoice_number,
           i.customer_name,
           i.customer_phone,
+          i.payment_method,
           i.subtotal,
           i.tax_amount,
           i.tip_amount,
@@ -113,16 +115,16 @@ class Invoice {
     try {
       await connection.beginTransaction();
 
-      const { invoiceNumber, customerName, customerPhone, items, subtotal, taxAmount, tipAmount, total, date } = invoiceData;
+      const { invoiceNumber, customerName, customerPhone, paymentMethod, items, subtotal, taxAmount, tipAmount, total, date } = invoiceData;
 
       // Convert ISO datetime to MySQL datetime format
       const mysqlDate = new Date(date).toISOString().slice(0, 19).replace('T', ' ');
 
       // Insert invoice
       await connection.execute(`
-        INSERT INTO invoices (invoice_number, customer_name, customer_phone, subtotal, tax_amount, tip_amount, total, date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `, [invoiceNumber, customerName, customerPhone, subtotal, taxAmount, tipAmount, total, mysqlDate]);
+        INSERT INTO invoices (invoice_number, customer_name, customer_phone, payment_method, subtotal, tax_amount, tip_amount, total, date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [invoiceNumber, customerName, customerPhone, paymentMethod, subtotal, taxAmount, tipAmount, total, mysqlDate]);
 
       // Insert invoice items
       for (const item of items) {
@@ -138,6 +140,7 @@ class Invoice {
         invoiceNumber,
         customerName,
         customerPhone,
+        paymentMethod,
         items,
         subtotal: parseFloat(subtotal),
         tax_amount: parseFloat(taxAmount),

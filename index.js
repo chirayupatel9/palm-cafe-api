@@ -212,6 +212,23 @@ const generatePDF = async (invoice) => {
     doc.text('Total:', margin + 290, currentY + 5, { width: 80, align: 'right' }); // Better Y position
     doc.text(formatCurrency(invoice.total), margin + 380, currentY + 5, { width: 80, align: 'right' }); // Better Y position
 
+    // Payment Method
+    currentY += 25; // Add space after total
+    if (currentY > pageHeight - 120) {
+      doc.addPage();
+      currentY = margin + 50;
+    }
+    
+    doc.fontSize(10).font('Helvetica-Bold').fill('#153059').text('Payment Method:', margin, currentY);
+    const paymentMethod = invoice.payment_method || 'cash';
+    const paymentLabels = {
+      'cash': 'Cash',
+      'card': 'Card',
+      'upi': 'UPI',
+      'online': 'Online'
+    };
+    doc.fontSize(10).font('Helvetica').fill('#153059').text(paymentLabels[paymentMethod] || 'Cash', margin + 120, currentY);
+
     // Footer - properly positioned to prevent overflow
     const footerY = pageHeight - 60; // Larger footer height for better positioning
     doc.rect(0, footerY, pageWidth, 60).fill('#153059');
@@ -775,7 +792,7 @@ app.get('/api/invoices', async (req, res) => {
 // Create new invoice
 app.post('/api/invoices', async (req, res) => {
   try {
-    const { customerName, customerPhone, items, tipAmount, date } = req.body;
+    const { customerName, customerPhone, paymentMethod, items, tipAmount, date } = req.body;
     
     if (!customerName || !items || items.length === 0) {
       return res.status(400).json({ error: 'Customer name and items are required' });
@@ -797,6 +814,7 @@ app.post('/api/invoices', async (req, res) => {
       invoiceNumber,
       customerName,
       customerPhone,
+      paymentMethod: paymentMethod || 'cash',
       items,
       subtotal,
       taxAmount: taxCalculation.taxAmount,
