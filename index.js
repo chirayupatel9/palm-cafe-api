@@ -922,23 +922,6 @@ app.get('/api/inventory', auth, async (req, res) => {
   }
 });
 
-// Get inventory item by ID
-app.get('/api/inventory/:id', auth, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const item = await Inventory.getById(id);
-    
-    if (!item) {
-      return res.status(404).json({ error: 'Inventory item not found' });
-    }
-    
-    res.json(item);
-  } catch (error) {
-    console.error('Error fetching inventory item:', error);
-    res.status(500).json({ error: 'Failed to fetch inventory item' });
-  }
-});
-
 // Create new inventory item
 app.post('/api/inventory', auth, async (req, res) => {
   try {
@@ -1008,11 +991,14 @@ app.delete('/api/inventory/:id', auth, async (req, res) => {
 
 // Get inventory categories
 app.get('/api/inventory/categories', auth, async (req, res) => {
+  console.log('🔍 Inventory categories endpoint hit');
   try {
+    console.log('📊 Fetching inventory categories...');
     const categories = await Inventory.getCategories();
+    console.log('✅ Categories fetched:', categories);
     res.json(categories);
   } catch (error) {
-    console.error('Error fetching inventory categories:', error);
+    console.error('❌ Error fetching inventory categories:', error);
     res.status(500).json({ error: 'Failed to fetch inventory categories' });
   }
 });
@@ -1117,6 +1103,42 @@ app.post('/api/inventory/import', auth, upload.single('file'), async (req, res) 
   } catch (error) {
     console.error('Error importing inventory:', error);
     res.status(500).json({ error: 'Failed to import inventory' });
+  }
+});
+
+// Test endpoint
+app.get('/api/test', (req, res) => {
+  res.json({ message: 'Server is running!', timestamp: new Date().toISOString() });
+});
+
+// Test inventory categories without auth (for debugging)
+app.get('/api/inventory/categories-test', async (req, res) => {
+  console.log('🔍 Inventory categories test endpoint hit (no auth)');
+  try {
+    console.log('📊 Fetching inventory categories...');
+    const categories = await Inventory.getCategories();
+    console.log('✅ Categories fetched:', categories);
+    res.json(categories);
+  } catch (error) {
+    console.error('❌ Error fetching inventory categories:', error);
+    res.status(500).json({ error: 'Failed to fetch inventory categories', details: error.message });
+  }
+});
+
+// Get inventory item by ID (must come after specific routes)
+app.get('/api/inventory/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const item = await Inventory.getById(id);
+    
+    if (!item) {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+    
+    res.json(item);
+  } catch (error) {
+    console.error('Error fetching inventory item:', error);
+    res.status(500).json({ error: 'Failed to fetch inventory item' });
   }
 });
 
