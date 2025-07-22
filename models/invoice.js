@@ -7,6 +7,7 @@ class Invoice {
       const [invoices] = await pool.execute(`
         SELECT 
           i.invoice_number,
+          i.order_id,
           i.customer_name,
           i.customer_phone,
           i.payment_method,
@@ -15,8 +16,10 @@ class Invoice {
           i.tip_amount,
           i.total_amount,
           i.invoice_date,
-          i.created_at
+          i.created_at,
+          o.order_number
         FROM invoices i
+        LEFT JOIN orders o ON i.order_id = o.id
         ORDER BY i.invoice_date DESC
       `);
 
@@ -61,6 +64,7 @@ class Invoice {
       const [invoices] = await pool.execute(`
         SELECT 
           i.invoice_number,
+          i.order_id,
           i.customer_name,
           i.customer_phone,
           i.payment_method,
@@ -69,8 +73,10 @@ class Invoice {
           i.tip_amount,
           i.total_amount,
           i.invoice_date,
-          i.created_at
+          i.created_at,
+          o.order_number
         FROM invoices i
+        LEFT JOIN orders o ON i.order_id = o.id
         WHERE i.invoice_number = ?
       `, [invoiceNumber]);
 
@@ -115,16 +121,16 @@ class Invoice {
     try {
       await connection.beginTransaction();
 
-      const { invoiceNumber, customerName, customerPhone, paymentMethod, items, subtotal, taxAmount, tipAmount, total, date } = invoiceData;
+      const { invoiceNumber, order_id, customerName, customerPhone, paymentMethod, items, subtotal, taxAmount, tipAmount, total, date } = invoiceData;
 
       // Convert ISO datetime to MySQL datetime format
       const mysqlDate = new Date(date).toISOString().slice(0, 19).replace('T', ' ');
 
       // Insert invoice
       await connection.execute(`
-        INSERT INTO invoices (invoice_number, customer_name, customer_phone, payment_method, subtotal, tax_amount, tip_amount, total_amount, invoice_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [invoiceNumber, customerName, customerPhone, paymentMethod, subtotal, taxAmount, tipAmount, total, mysqlDate]);
+        INSERT INTO invoices (invoice_number, order_id, customer_name, customer_phone, payment_method, subtotal, tax_amount, tip_amount, total_amount, invoice_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [invoiceNumber, order_id, customerName, customerPhone, paymentMethod, subtotal, taxAmount, tipAmount, total, mysqlDate]);
 
       // Insert invoice items
       for (const item of items) {

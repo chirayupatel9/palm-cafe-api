@@ -15,6 +15,7 @@ const TaxSettings = require('./models/taxSettings');
 const CurrencySettings = require('./models/currencySettings');
 const User = require('./models/user');
 const Inventory = require('./models/inventory');
+const Order = require('./models/order');
 const { auth, adminAuth, JWT_SECRET } = require('./middleware/auth');
 
 const app = express();
@@ -132,19 +133,27 @@ const generatePDF = async (invoice) => {
     doc.fontSize(11).font('Helvetica-Bold').fill('#153059').text('Invoice #:', margin, currentY);
     doc.fontSize(11).font('Helvetica').text(invoice.invoice_number || invoice.invoiceNumber || 'N/A', margin + 70, currentY);
     
-    doc.fontSize(9).font('Helvetica').text(`Date: ${new Date(invoice.date).toLocaleDateString()}`, margin, currentY + 15);
-    doc.fontSize(9).font('Helvetica').text(`Time: ${new Date(invoice.date).toLocaleTimeString()}`, margin, currentY + 25);
+    if (invoice.order_number) {
+      doc.fontSize(9).font('Helvetica-Bold').fill('#153059').text('Order #:', margin, currentY + 15);
+      doc.fontSize(9).font('Helvetica').text(invoice.order_number, margin + 70, currentY + 15);
+      doc.fontSize(9).font('Helvetica').text(`Date: ${new Date(invoice.date).toLocaleDateString()}`, margin, currentY + 25);
+      doc.fontSize(9).font('Helvetica').text(`Time: ${new Date(invoice.date).toLocaleTimeString()}`, margin, currentY + 35);
+    } else {
+      doc.fontSize(9).font('Helvetica').text(`Date: ${new Date(invoice.date).toLocaleDateString()}`, margin, currentY + 15);
+      doc.fontSize(9).font('Helvetica').text(`Time: ${new Date(invoice.date).toLocaleTimeString()}`, margin, currentY + 25);
+    }
     
     // Right column - Customer details
-    doc.fontSize(11).font('Helvetica-Bold').fill('#153059').text('Customer:', margin + 300, currentY);
-    doc.fontSize(11).font('Helvetica').text(invoice.customerName || invoice.customer_name || 'Walk-in Customer', margin + 370, currentY);
+    const customerY = invoice.order_number ? currentY + 10 : currentY;
+    doc.fontSize(11).font('Helvetica-Bold').fill('#153059').text('Customer:', margin + 300, customerY);
+    doc.fontSize(11).font('Helvetica').text(invoice.customerName || invoice.customer_name || 'Walk-in Customer', margin + 370, customerY);
     
     if (invoice.customerPhone || invoice.customer_phone) {
-      doc.fontSize(9).font('Helvetica').text(`Phone: ${invoice.customerPhone || invoice.customer_phone}`, margin + 300, currentY + 15);
+      doc.fontSize(9).font('Helvetica').text(`Phone: ${invoice.customerPhone || invoice.customer_phone}`, margin + 300, customerY + 15);
     }
 
     // Items table
-    currentY += 40; // Better spacing
+    currentY += invoice.order_number ? 50 : 40; // Extra spacing when order number is present
     
     // Table header - more readable
     doc.roundedRect(margin, currentY, contentWidth, 20, 5).fill('#f4e1ba'); // Larger height
@@ -829,8 +838,30 @@ app.post('/api/invoices', async (req, res) => {
     const tipAmountNum = parseFloat(tipAmount) || 0;
     const total = subtotal + taxCalculation.taxAmount + tipAmountNum;
 
+    // First create an order
+    const orderData = {
+      customer_name: customerName,
+      customer_phone: customerPhone,
+      items: items.map(item => ({
+        menu_item_id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        price: parseFloat(item.price),
+        total: parseFloat(item.price) * item.quantity
+      })),
+      total_amount: subtotal,
+      tax_amount: taxCalculation.taxAmount,
+      tip_amount: tipAmountNum,
+      final_amount: total,
+      payment_method: paymentMethod || 'cash',
+      notes: ''
+    };
+
+    const createdOrder = await Order.create(orderData);
+
     const invoiceData = {
       invoiceNumber,
+      order_id: createdOrder.id,
       customerName,
       customerPhone,
       paymentMethod: paymentMethod || 'cash',
@@ -848,6 +879,7 @@ app.post('/api/invoices', async (req, res) => {
       const pdfBase64 = await generatePDF(createdInvoice);
       res.json({
         invoiceNumber,
+        orderNumber: createdOrder.order_number,
         pdf: pdfBase64,
         taxInfo: {
           taxRate: taxCalculation.taxRate,
@@ -1111,6 +1143,216 @@ app.get('/api/inventory/:id', auth, async (req, res) => {
   } catch (error) {
     console.error('Error fetching inventory item:', error);
     res.status(500).json({ error: 'Failed to fetch inventory item' });
+  }
+});
+
+// Generate thermal printer content
+const generateThermalPrintContent = (order) => {
+  const formatCurrency = (amount) => {
+    return `₹${parseFloat(amount || 0).toFixed(2)}`;
+  };
+
+  const formatTime = (timestamp) => {
+    return new Date(timestamp).toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+  };
+
+  const formatDate = (timestamp) => {
+    return new Date(timestamp).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+  };
+
+  let content = '';
+  
+  // Header
+  content += '='.repeat(32) + '\n';
+  content += '        PALM CAFE\n';
+  content += '='.repeat(32) + '\n';
+  content += `Order #: ${order.order_number}\n`;
+  content += `Date: ${formatDate(order.created_at)}\n`;
+  content += `Time: ${formatTime(order.created_at)}\n`;
+  content += '-'.repeat(32) + '\n';
+  
+  // Customer Info
+  content += `Customer: ${order.customer_name || 'Walk-in Customer'}\n`;
+  if (order.customer_phone && order.customer_phone.trim() !== '') {
+    content += `Phone: ${order.customer_phone}\n`;
+  }
+  if (order.payment_method) {
+    content += `Payment: ${order.payment_method.toUpperCase()}\n`;
+  }
+  content += '-'.repeat(32) + '\n';
+  
+  // Items
+  content += 'ITEMS:\n';
+  order.items.forEach(item => {
+    content += `${item.quantity}x ${item.name}\n`;
+    content += `    ${formatCurrency(item.price)} each\n`;
+    content += `    ${formatCurrency(item.total)}\n`;
+  });
+  content += '-'.repeat(32) + '\n';
+  
+  // Totals
+  content += `Subtotal: ${formatCurrency(order.total_amount)}\n`;
+  if (order.tax_amount > 0) {
+    content += `Tax: ${formatCurrency(order.tax_amount)}\n`;
+  }
+  if (order.tip_amount > 0) {
+    content += `Tip: ${formatCurrency(order.tip_amount)}\n`;
+  }
+  content += `TOTAL: ${formatCurrency(order.final_amount)}\n`;
+  content += '-'.repeat(32) + '\n';
+  
+  // Notes
+  if (order.notes) {
+    content += `NOTES: ${order.notes}\n`;
+    content += '-'.repeat(32) + '\n';
+  }
+  
+  // Footer
+  content += 'Thank you for your order!\n';
+  content += 'Please wait for your number\n';
+  content += '='.repeat(32) + '\n';
+  content += '\n\n\n\n\n'; // Extra spacing for thermal printer
+  
+  return content;
+};
+
+// Order endpoints
+// Get all orders
+app.get('/api/orders', auth, async (req, res) => {
+  try {
+    const orders = await Order.getAll();
+    res.json(orders);
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({ error: 'Failed to fetch orders' });
+  }
+});
+
+// Update order status
+app.patch('/api/orders/:id/status', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    
+    if (!status) {
+      return res.status(400).json({ error: 'Status is required' });
+    }
+
+    const validStatuses = ['pending', 'preparing', 'ready', 'completed', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    const updatedOrder = await Order.updateStatus(id, status);
+    res.json(updatedOrder);
+  } catch (error) {
+    console.error('Error updating order status:', error);
+    res.status(500).json({ error: 'Failed to update order status' });
+  }
+});
+
+// Create new order
+app.post('/api/orders', auth, async (req, res) => {
+  try {
+    const orderData = req.body;
+    
+    if (!orderData.items || orderData.items.length === 0) {
+      return res.status(400).json({ error: 'Order must contain at least one item' });
+    }
+
+    const newOrder = await Order.create(orderData);
+    res.status(201).json(newOrder);
+  } catch (error) {
+    console.error('Error creating order:', error);
+    res.status(500).json({ error: 'Failed to create order' });
+  }
+});
+
+// Create test order (for debugging)
+app.post('/api/orders/test', auth, async (req, res) => {
+  try {
+    console.log('🔍 Creating test order...');
+    
+    // First, let's get available menu items
+    const menuItems = await MenuItem.getAll();
+    console.log('📋 Available menu items:', menuItems.length);
+    
+    if (menuItems.length === 0) {
+      return res.status(400).json({ error: 'No menu items available. Please add menu items first.' });
+    }
+    
+    // Use the first available menu item
+    const firstItem = menuItems[0];
+    const secondItem = menuItems[1] || firstItem; // Use first item twice if only one exists
+    
+    console.log('🍽️ Using menu items:', { first: firstItem.name, second: secondItem.name });
+    
+    const testOrder = {
+      customer_name: 'Test Customer',
+      customer_email: 'test@example.com',
+      customer_phone: '+91 98765 43210',
+      items: [
+        {
+          menu_item_id: firstItem.id,
+          name: firstItem.name,
+          quantity: 2,
+          price: firstItem.price,
+          total: firstItem.price * 2
+        },
+        {
+          menu_item_id: secondItem.id,
+          name: secondItem.name,
+          quantity: 1,
+          price: secondItem.price,
+          total: secondItem.price
+        }
+      ],
+      total_amount: (firstItem.price * 2) + secondItem.price,
+      tax_amount: ((firstItem.price * 2) + secondItem.price) * 0.085, // 8.5% tax
+      tip_amount: 20.00,
+      final_amount: ((firstItem.price * 2) + secondItem.price) * 1.085 + 20.00,
+      payment_method: 'cash',
+      notes: 'Test order for kitchen display'
+    };
+
+    console.log('📝 Test order data:', testOrder);
+    
+    const newOrder = await Order.create(testOrder);
+    console.log('✅ Test order created successfully:', newOrder.id);
+    res.status(201).json(newOrder);
+  } catch (error) {
+    console.error('❌ Error creating test order:', error);
+    res.status(500).json({ error: 'Failed to create test order', details: error.message });
+  }
+});
+
+// Print order for thermal printer
+app.post('/api/orders/:id/print', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const order = await Order.getById(id);
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // Generate thermal printer formatted text
+    const printContent = generateThermalPrintContent(order);
+    
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Content-Disposition', `attachment; filename="order-${order.order_number}.txt"`);
+    res.send(printContent);
+  } catch (error) {
+    console.error('Error printing order:', error);
+    res.status(500).json({ error: 'Failed to print order' });
   }
 });
 
