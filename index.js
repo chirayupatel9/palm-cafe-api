@@ -42,7 +42,22 @@ const upload = multer({
 });
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:3001', 'http://127.0.0.1:3001'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+}));
+
+// Handle preflight requests
+app.options('*', cors());
+
+// Log CORS-related requests for debugging
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - Origin: ${req.headers.origin || 'No origin'}`);
+  next();
+});
+
 app.use(express.json());
 
 // Generate PDF invoice
@@ -406,12 +421,23 @@ app.get('/api/server/time', async (req, res) => {
       serverTime: now.toISOString(),
       serverTimeLocal: now.toString(),
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      timestamp: Math.floor(now.getTime() / 1000)
+      timestamp: Math.floor(now.getTime() / 1000),
+      cors: 'working'
     });
   } catch (error) {
     console.error('Time info error:', error);
     res.status(500).json({ error: 'Failed to get server time' });
   }
+});
+
+// CORS test endpoint
+app.get('/api/cors-test', (req, res) => {
+  res.json({ 
+    message: 'CORS is working!',
+    origin: req.headers.origin,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // API Routes
