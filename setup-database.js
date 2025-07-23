@@ -108,6 +108,7 @@ async function createDatabase() {
         total_amount DECIMAL(10,2) NOT NULL,
         tax_amount DECIMAL(10,2) DEFAULT 0,
         tip_amount DECIMAL(10,2) DEFAULT 0,
+        points_redeemed INT DEFAULT 0,
         final_amount DECIMAL(10,2) NOT NULL,
         status ENUM('pending', 'preparing', 'ready', 'completed', 'cancelled') DEFAULT 'pending',
         payment_method ENUM('cash', 'card', 'upi', 'online') DEFAULT 'cash',
