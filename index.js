@@ -362,14 +362,15 @@ app.post('/api/auth/login', async (req, res) => {
     await User.updateLastLogin(user.id);
 
     // Generate JWT token with timezone-friendly settings
+    const now = Math.floor(Date.now() / 1000);
     const token = jwt.sign(
       { 
         userId: user.id,
-        iat: Math.floor(Date.now() / 1000) // Explicit issue time
+        iat: now, // Explicit issue time
+        exp: now + (24 * 60 * 60) // 24 hours from now
       }, 
       JWT_SECRET, 
       { 
-        expiresIn: '24h',
         algorithm: 'HS256'
       }
     );
@@ -394,6 +395,22 @@ app.get('/api/auth/profile', auth, async (req, res) => {
   } catch (error) {
     console.error('Profile error:', error);
     res.status(500).json({ error: 'Failed to get profile' });
+  }
+});
+
+// Server time and timezone info (for debugging)
+app.get('/api/server/time', async (req, res) => {
+  try {
+    const now = new Date();
+    res.json({
+      serverTime: now.toISOString(),
+      serverTimeLocal: now.toString(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timestamp: Math.floor(now.getTime() / 1000)
+    });
+  } catch (error) {
+    console.error('Time info error:', error);
+    res.status(500).json({ error: 'Failed to get server time' });
   }
 });
 
@@ -1562,7 +1579,57 @@ app.get('/api/customers/:id', auth, async (req, res) => {
   }
 });
 
-// Search customers
+// Public customer authentication endpoints (no auth required)
+// Search customers by phone for login
+app.get('/api/customer/login/:phone', async (req, res) => {
+  try {
+    const { phone } = req.params;
+    const customer = await Customer.findByEmailOrPhone(null, phone);
+    
+    if (customer) {
+      res.json(customer);
+    } else {
+      res.status(404).json({ error: 'Customer not found' });
+    }
+  } catch (error) {
+    console.error('Error finding customer for login:', error);
+    res.status(500).json({ error: 'Failed to find customer' });
+  }
+});
+
+// Register new customer (public endpoint)
+app.post('/api/customer/register', async (req, res) => {
+  try {
+    const { name, email, phone, address, date_of_birth, notes } = req.body;
+    
+    if (!name || !phone) {
+      return res.status(400).json({ error: 'Customer name and phone number are required' });
+    }
+
+    // Check if customer already exists
+    const existingCustomer = await Customer.findByEmailOrPhone(email, phone);
+    if (existingCustomer) {
+      return res.status(400).json({ error: 'Customer with this phone number already exists' });
+    }
+
+    const customerData = {
+      name: name.trim(),
+      email: email ? email.trim() : null,
+      phone: phone.trim(),
+      address: address ? address.trim() : null,
+      date_of_birth: date_of_birth || null,
+      notes: notes ? notes.trim() : null
+    };
+
+    const customer = await Customer.create(customerData);
+    res.status(201).json(customer);
+  } catch (error) {
+    console.error('Error creating customer:', error);
+    res.status(500).json({ error: 'Failed to create customer' });
+  }
+});
+
+// Search customers (admin only)
 app.get('/api/customers/search/:query', auth, async (req, res) => {
   try {
     const { query } = req.params;
@@ -1574,7 +1641,7 @@ app.get('/api/customers/search/:query', auth, async (req, res) => {
   }
 });
 
-// Create new customer
+// Create new customer (admin only)
 app.post('/api/customers', auth, async (req, res) => {
   try {
     const { name, email, phone, address, date_of_birth, notes } = req.body;
