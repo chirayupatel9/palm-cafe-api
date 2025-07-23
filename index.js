@@ -43,7 +43,40 @@ const upload = multer({
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:3000', 'https://*', 'http://127.0.0.1:3000', 'http://localhost:3001', 'http://127.0.0.1:3001'],
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      // Development origins
+      'http://localhost:3000',
+      'http://127.0.0.1:3000', 
+      'http://localhost:3001',
+      'http://127.0.0.1:3001',
+      // Production origins
+      'https://palm-cafe-api-r6rx.vercel.app',
+      'https://palm-cafe-ui.vercel.app',
+      'https://palm-cafe.vercel.app',
+      '*'
+    ];
+    
+    // Check if origin is in allowed list
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      return callback(null, true);
+    }
+    
+    // Allow any Vercel subdomain
+    if (origin.includes('.vercel.app')) {
+      return callback(null, true);
+    }
+    
+    // Allow any HTTPS origin for development flexibility
+    if (origin.startsWith('https://')) {
+      return callback(null, true);
+    }
+    
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
@@ -54,7 +87,15 @@ app.options('*', cors());
 
 // Log CORS-related requests for debugging
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - Origin: ${req.headers.origin || 'No origin'}`);
+  const origin = req.headers.origin || 'No origin';
+  const userAgent = req.headers['user-agent'] || 'No user agent';
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - Origin: ${origin} - User-Agent: ${userAgent.substring(0, 50)}...`);
+  
+  // Log CORS preflight requests specifically
+  if (req.method === 'OPTIONS') {
+    console.log(`CORS Preflight Request - Origin: ${origin}`);
+  }
+  
   next();
 });
 
@@ -436,7 +477,18 @@ app.get('/api/cors-test', (req, res) => {
     message: 'CORS is working!',
     origin: req.headers.origin,
     method: req.method,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    allowedOrigins: [
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'http://localhost:3001',
+      'http://127.0.0.1:3001',
+      'https://palm-cafe-api-r6rx.vercel.app',
+      'https://palm-cafe-ui.vercel.app',
+      'https://palm-cafe.vercel.app',
+      'Any .vercel.app subdomain',
+      'Any HTTPS origin'
+    ]
   });
 });
 
