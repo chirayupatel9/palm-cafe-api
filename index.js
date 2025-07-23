@@ -997,6 +997,66 @@ app.get('/api/statistics', async (req, res) => {
   }
 });
 
+// Get daily reports data
+app.get('/api/reports/daily', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 7;
+    const [rows] = await pool.execute(`
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as orders,
+        SUM(final_amount) as earnings
+      FROM orders 
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+      GROUP BY DATE(created_at)
+      ORDER BY date ASC
+    `, [days]);
+
+    // Calculate totals
+    const totalEarnings = rows.reduce((sum, row) => sum + parseFloat(row.earnings || 0), 0);
+    const totalOrders = rows.reduce((sum, row) => sum + parseInt(row.orders || 0), 0);
+
+    res.json({
+      dailyData: rows,
+      totalEarnings,
+      totalOrders
+    });
+  } catch (error) {
+    console.error('Error fetching daily reports:', error);
+    res.status(500).json({ error: 'Failed to fetch daily reports' });
+  }
+});
+
+// Get top ordered items
+app.get('/api/reports/top-items', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(`
+      SELECT 
+        mi.id,
+        mi.name,
+        COALESCE(c.name, 'Uncategorized') as category,
+        COUNT(oi.id) as total_orders,
+        SUM(oi.total_price) as total_revenue
+      FROM menu_items mi
+      LEFT JOIN categories c ON mi.category_id = c.id
+      LEFT JOIN order_items oi ON mi.id = oi.menu_item_id
+      LEFT JOIN orders o ON oi.order_id = o.id
+      WHERE (o.status != 'cancelled' OR o.status IS NULL)
+      GROUP BY mi.id, mi.name, c.name
+      HAVING total_orders > 0
+      ORDER BY total_orders DESC, total_revenue DESC
+      LIMIT 10
+    `);
+
+    res.json({
+      topItems: rows
+    });
+  } catch (error) {
+    console.error('Error fetching top items:', error);
+    res.status(500).json({ error: 'Failed to fetch top items' });
+  }
+});
+
 // Inventory Management Routes
 
 // Get all inventory items
