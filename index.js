@@ -7,7 +7,7 @@ const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');
-const { initializeDatabase, testConnection } = require('./config/database');
+const { initializeDatabase, testConnection, pool } = require('./config/database');
 const MenuItem = require('./models/menuItem');
 const Category = require('./models/category');
 const Invoice = require('./models/invoice');
@@ -16,6 +16,7 @@ const CurrencySettings = require('./models/currencySettings');
 const User = require('./models/user');
 const Inventory = require('./models/inventory');
 const Order = require('./models/order');
+const Customer = require('./models/customer');
 const { auth, adminAuth, JWT_SECRET } = require('./middleware/auth');
 
 const app = express();
@@ -289,6 +290,39 @@ app.post('/api/auth/register', async (req, res) => {
   } catch (error) {
     console.error('Registration error:', error);
     res.status(500).json({ error: 'Failed to register user' });
+  }
+});
+
+// Register new admin (requires existing admin authentication)
+app.post('/api/auth/register-admin', auth, async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+
+    // Validate input
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findByEmail(email);
+    if (existingUser) {
+      return res.status(400).json({ error: 'User with this email already exists' });
+    }
+
+    // Create new admin user
+    const user = await User.create({ username, email, password, role: 'admin' });
+
+    res.status(201).json({
+      message: 'Admin registered successfully',
+      user: { id: user.id, username: user.username, email: user.email, role: user.role }
+    });
+  } catch (error) {
+    console.error('Admin registration error:', error);
+    res.status(500).json({ error: 'Failed to register admin' });
   }
 });
 
@@ -820,7 +854,7 @@ app.get('/api/invoices', async (req, res) => {
 // Create new invoice
 app.post('/api/invoices', async (req, res) => {
   try {
-    const { customerName, customerPhone, paymentMethod, items, tipAmount, date } = req.body;
+    const { customerName, customerPhone, customerEmail, paymentMethod, items, tipAmount, pointsRedeemed, date } = req.body;
     
     if (!customerName || !items || items.length === 0) {
       return res.status(400).json({ error: 'Customer name and items are required' });
@@ -836,11 +870,32 @@ app.post('/api/invoices', async (req, res) => {
     
     // Calculate total
     const tipAmountNum = parseFloat(tipAmount) || 0;
-    const total = subtotal + taxCalculation.taxAmount + tipAmountNum;
+    const pointsRedeemedNum = parseInt(pointsRedeemed) || 0;
+    const pointsDiscount = pointsRedeemedNum * 0.1; // 1 point = 0.1 INR
+    const total = subtotal + taxCalculation.taxAmount + tipAmountNum - pointsDiscount;
+
+    // Check if customer exists or create new one
+    let customer = null;
+    if (customerPhone || customerName) {
+      customer = await Customer.findByEmailOrPhone(customerName, customerPhone);
+      
+      if (!customer && customerPhone) {
+        // Create new customer if phone number provided
+        customer = await Customer.create({
+          name: customerName,
+          phone: customerPhone,
+          email: customerEmail || null,
+          address: null,
+          date_of_birth: null,
+          notes: 'Auto-created from order'
+        });
+      }
+    }
 
     // First create an order
     const orderData = {
       customer_name: customerName,
+      customer_email: customerEmail || null,
       customer_phone: customerPhone,
       items: items.map(item => ({
         menu_item_id: item.id,
@@ -852,12 +907,23 @@ app.post('/api/invoices', async (req, res) => {
       total_amount: subtotal,
       tax_amount: taxCalculation.taxAmount,
       tip_amount: tipAmountNum,
+      points_redeemed: pointsRedeemedNum,
       final_amount: total,
       payment_method: paymentMethod || 'cash',
       notes: ''
     };
 
     const createdOrder = await Order.create(orderData);
+
+    // Update order with customer_id if customer exists
+    if (customer) {
+      await pool.execute('UPDATE orders SET customer_id = ? WHERE id = ?', [customer.id, createdOrder.id]);
+      
+      // Update customer loyalty data (earn points from order, deduct redeemed points)
+      const pointsEarned = Math.floor(total / 10); // 1 point per 10 INR
+      const netPointsChange = pointsEarned - pointsRedeemedNum;
+      await Customer.updateLoyaltyData(customer.id, total, netPointsChange);
+    }
 
     const invoiceData = {
       invoiceNumber,
@@ -1225,14 +1291,44 @@ const generateThermalPrintContent = (order) => {
 };
 
 // Order endpoints
-// Get all orders
+// Get all orders (admin only)
 app.get('/api/orders', auth, async (req, res) => {
   try {
-    const orders = await Order.getAll();
+    const { customer_phone, order_number } = req.query;
+    
+    let orders;
+    if (customer_phone) {
+      // Filter orders by customer phone
+      orders = await Order.getByCustomerPhone(customer_phone);
+    } else if (order_number) {
+      // Filter orders by order number
+      orders = await Order.getByOrderNumber(order_number);
+    } else {
+      // Get all orders
+      orders = await Order.getAll();
+    }
+    
     res.json(orders);
   } catch (error) {
     console.error('Error fetching orders:', error);
     res.status(500).json({ error: 'Failed to fetch orders' });
+  }
+});
+
+// Get customer orders (public endpoint)
+app.get('/api/customer/orders', async (req, res) => {
+  try {
+    const { customer_phone } = req.query;
+    
+    if (!customer_phone) {
+      return res.status(400).json({ error: 'Customer phone number is required' });
+    }
+    
+    const orders = await Order.getByCustomerPhone(customer_phone);
+    res.json(orders);
+  } catch (error) {
+    console.error('Error fetching customer orders:', error);
+    res.status(500).json({ error: 'Failed to fetch customer orders' });
   }
 });
 
@@ -1353,6 +1449,143 @@ app.post('/api/orders/:id/print', auth, async (req, res) => {
   } catch (error) {
     console.error('Error printing order:', error);
     res.status(500).json({ error: 'Failed to print order' });
+  }
+});
+
+// Customer Management Routes
+
+// Get all customers
+app.get('/api/customers', auth, async (req, res) => {
+  try {
+    const customers = await Customer.getAll();
+    res.json(customers);
+  } catch (error) {
+    console.error('Error fetching customers:', error);
+    res.status(500).json({ error: 'Failed to fetch customers' });
+  }
+});
+
+// Get customer by ID
+app.get('/api/customers/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const customer = await Customer.getById(id);
+    
+    if (!customer) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+    
+    res.json(customer);
+  } catch (error) {
+    console.error('Error fetching customer:', error);
+    res.status(500).json({ error: 'Failed to fetch customer' });
+  }
+});
+
+// Search customers
+app.get('/api/customers/search/:query', auth, async (req, res) => {
+  try {
+    const { query } = req.params;
+    const customers = await Customer.search(query);
+    res.json(customers);
+  } catch (error) {
+    console.error('Error searching customers:', error);
+    res.status(500).json({ error: 'Failed to search customers' });
+  }
+});
+
+// Create new customer
+app.post('/api/customers', auth, async (req, res) => {
+  try {
+    const { name, email, phone, address, date_of_birth, notes } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ error: 'Customer name is required' });
+    }
+
+    const customerData = {
+      name: name.trim(),
+      email: email ? email.trim() : null,
+      phone: phone ? phone.trim() : null,
+      address: address ? address.trim() : null,
+      date_of_birth: date_of_birth || null,
+      notes: notes ? notes.trim() : null
+    };
+
+    const customer = await Customer.create(customerData);
+    res.status(201).json(customer);
+  } catch (error) {
+    console.error('Error creating customer:', error);
+    res.status(500).json({ error: 'Failed to create customer' });
+  }
+});
+
+// Update customer
+app.put('/api/customers/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, email, phone, address, date_of_birth, notes, is_active } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ error: 'Customer name is required' });
+    }
+
+    const customerData = {
+      name: name.trim(),
+      email: email ? email.trim() : null,
+      phone: phone ? phone.trim() : null,
+      address: address ? address.trim() : null,
+      date_of_birth: date_of_birth || null,
+      notes: notes ? notes.trim() : null,
+      is_active: is_active !== undefined ? is_active : true
+    };
+
+    const customer = await Customer.update(id, customerData);
+    res.json(customer);
+  } catch (error) {
+    console.error('Error updating customer:', error);
+    res.status(500).json({ error: 'Failed to update customer' });
+  }
+});
+
+// Get customer order history
+app.get('/api/customers/:id/orders', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const orders = await Customer.getOrderHistory(id);
+    res.json(orders);
+  } catch (error) {
+    console.error('Error fetching customer orders:', error);
+    res.status(500).json({ error: 'Failed to fetch customer orders' });
+  }
+});
+
+// Get customer statistics
+app.get('/api/customers/statistics', auth, async (req, res) => {
+  try {
+    const statistics = await Customer.getStatistics();
+    res.json(statistics);
+  } catch (error) {
+    console.error('Error fetching customer statistics:', error);
+    res.status(500).json({ error: 'Failed to fetch customer statistics' });
+  }
+});
+
+// Redeem loyalty points
+app.post('/api/customers/:id/redeem-points', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { points } = req.body;
+    
+    if (!points || points <= 0) {
+      return res.status(400).json({ error: 'Valid points amount is required' });
+    }
+
+    const customer = await Customer.redeemPoints(id, points);
+    res.json(customer);
+  } catch (error) {
+    console.error('Error redeeming points:', error);
+    res.status(500).json({ error: 'Failed to redeem points' });
   }
 });
 

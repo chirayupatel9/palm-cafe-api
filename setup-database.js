@@ -54,6 +54,31 @@ async function createDatabase() {
     `);
     console.log('✅ Categories table created');
 
+    // Customers table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS customers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(200) NOT NULL,
+        email VARCHAR(200) UNIQUE,
+        phone VARCHAR(50) UNIQUE,
+        address TEXT,
+        date_of_birth DATE,
+        loyalty_points INT DEFAULT 0,
+        total_spent DECIMAL(10,2) DEFAULT 0,
+        visit_count INT DEFAULT 0,
+        first_visit_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_visit_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_active BOOLEAN DEFAULT TRUE,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_email (email),
+        INDEX idx_phone (phone),
+        INDEX idx_loyalty_points (loyalty_points)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    console.log('✅ Customers table created');
+
     // Menu items table
     await connection.query(`
       CREATE TABLE IF NOT EXISTS menu_items (
@@ -76,6 +101,7 @@ async function createDatabase() {
       CREATE TABLE IF NOT EXISTS orders (
         id INT AUTO_INCREMENT PRIMARY KEY,
         order_number VARCHAR(50) UNIQUE NOT NULL,
+        customer_id INT,
         customer_name VARCHAR(200),
         customer_email VARCHAR(200),
         customer_phone VARCHAR(50),
@@ -87,7 +113,8 @@ async function createDatabase() {
         payment_method ENUM('cash', 'card', 'upi', 'online') DEFAULT 'cash',
         notes TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
     console.log('✅ Orders table created');

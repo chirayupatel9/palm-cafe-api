@@ -14,12 +14,14 @@ class Order {
         SELECT 
           o.id,
           o.order_number,
+          o.customer_id,
           o.customer_name,
           o.customer_email,
           o.customer_phone,
           o.total_amount,
           o.tax_amount,
           o.tip_amount,
+          o.points_redeemed,
           o.final_amount,
           o.status,
           o.payment_method,
@@ -85,6 +87,7 @@ class Order {
           total_amount: parseFloat(order.total_amount),
           tax_amount: parseFloat(order.tax_amount),
           tip_amount: parseFloat(order.tip_amount),
+          points_redeemed: parseInt(order.points_redeemed || 0),
           final_amount: parseFloat(order.final_amount)
         };
       });
@@ -204,17 +207,28 @@ class Order {
       const orderNumber = `ORD${Date.now()}`;
       console.log('🔢 Order.create: Generated order number:', orderNumber);
 
+      // Handle undefined values by converting them to null
+      const safeCustomerName = customer_name || null;
+      const safeCustomerEmail = customer_email || null;
+      const safeCustomerPhone = customer_phone || null;
+      const safeTotalAmount = total_amount || 0;
+      const safeTaxAmount = tax_amount || 0;
+      const safeTipAmount = tip_amount || 0;
+      const safeFinalAmount = final_amount || 0;
+      const safePaymentMethod = payment_method || null;
+      const safeNotes = notes || null;
+
       // Create order
       const [orderResult] = await connection.execute(`
         INSERT INTO orders (
-          order_number, customer_name, customer_email, customer_phone,
-          total_amount, tax_amount, tip_amount, final_amount,
+          order_number, customer_id, customer_name, customer_email, customer_phone,
+          total_amount, tax_amount, tip_amount, points_redeemed, final_amount,
           payment_method, notes, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
       `, [
-        orderNumber, customer_name, customer_email, customer_phone,
-        total_amount, tax_amount, tip_amount, final_amount,
-        payment_method, notes
+        orderNumber, null, safeCustomerName, safeCustomerEmail, safeCustomerPhone,
+        safeTotalAmount, safeTaxAmount, safeTipAmount, orderData.points_redeemed || 0, safeFinalAmount,
+        safePaymentMethod, safeNotes
       ]);
 
       const orderId = orderResult.insertId;
@@ -224,12 +238,20 @@ class Order {
       console.log('🍽️ Order.create: Creating order items...');
       for (const item of items) {
         console.log('📦 Order.create: Processing item:', item);
+        
+        // Handle undefined values for order items
+        const safeMenuItemId = item.menu_item_id || item.id || null;
+        const safeItemName = item.name || null;
+        const safeQuantity = item.quantity || 0;
+        const safeUnitPrice = item.price || 0;
+        const safeTotalPrice = item.total || 0;
+        
         await connection.execute(`
           INSERT INTO order_items (
             order_id, menu_item_id, item_name, quantity, unit_price, total_price
           ) VALUES (?, ?, ?, ?, ?, ?)
         `, [
-          orderId, item.menu_item_id, item.name, item.quantity, item.price, item.total
+          orderId, safeMenuItemId, safeItemName, safeQuantity, safeUnitPrice, safeTotalPrice
         ]);
         console.log('✅ Order.create: Item created successfully');
       }
@@ -265,6 +287,154 @@ class Order {
       return await this.getById(id);
     } catch (error) {
       throw new Error(`Error updating order status: ${error.message}`);
+    }
+  }
+
+  // Get orders by customer phone
+  static async getByCustomerPhone(customerPhone) {
+    try {
+      const [rows] = await pool.execute(`
+        SELECT 
+          o.id,
+          o.order_number,
+          o.customer_name,
+          o.customer_email,
+          o.customer_phone,
+          o.total_amount,
+          o.tax_amount,
+          o.tip_amount,
+          o.final_amount,
+          o.status,
+          o.payment_method,
+          o.notes,
+          o.created_at,
+          o.updated_at,
+          JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'id', oi.id,
+              'menu_item_id', oi.menu_item_id,
+              'name', COALESCE(mi.name, oi.item_name),
+              'quantity', oi.quantity,
+              'price', oi.unit_price,
+              'total', oi.total_price
+            )
+          ) as items
+        FROM orders o
+        LEFT JOIN order_items oi ON o.id = oi.order_id
+        LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
+        WHERE o.customer_phone = ?
+        GROUP BY o.id
+        ORDER BY o.created_at DESC
+      `, [customerPhone]);
+
+      return rows.map(order => {
+        let items = [];
+        
+        // Handle items - they might be objects, arrays, or null
+        if (order.items) {
+          if (Array.isArray(order.items)) {
+            // Already an array
+            items = order.items.filter(item => item && item.id !== null);
+          } else if (typeof order.items === 'string') {
+            // JSON string that needs parsing
+            try {
+              const parsed = JSON.parse(order.items);
+              items = Array.isArray(parsed) ? parsed.filter(item => item && item.id !== null) : [];
+            } catch (error) {
+              console.log('⚠️ JSON parse error for order items:', order.items, error.message);
+              items = [];
+            }
+          } else if (typeof order.items === 'object') {
+            // Single object, wrap in array
+            items = [order.items].filter(item => item && item.id !== null);
+          }
+        }
+        
+        return {
+          ...order,
+          items: items,
+          total_amount: parseFloat(order.total_amount),
+          tax_amount: parseFloat(order.tax_amount),
+          tip_amount: parseFloat(order.tip_amount),
+          final_amount: parseFloat(order.final_amount)
+        };
+      });
+    } catch (error) {
+      throw new Error(`Error fetching orders by customer phone: ${error.message}`);
+    }
+  }
+
+  // Get orders by order number
+  static async getByOrderNumber(orderNumber) {
+    try {
+      const [rows] = await pool.execute(`
+        SELECT 
+          o.id,
+          o.order_number,
+          o.customer_name,
+          o.customer_email,
+          o.customer_phone,
+          o.total_amount,
+          o.tax_amount,
+          o.tip_amount,
+          o.final_amount,
+          o.status,
+          o.payment_method,
+          o.notes,
+          o.created_at,
+          o.updated_at,
+          JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'id', oi.id,
+              'menu_item_id', oi.menu_item_id,
+              'name', COALESCE(mi.name, oi.item_name),
+              'quantity', oi.quantity,
+              'price', oi.unit_price,
+              'total', oi.total_price
+            )
+          ) as items
+        FROM orders o
+        LEFT JOIN order_items oi ON o.id = oi.order_id
+        LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
+        WHERE o.order_number = ?
+        GROUP BY o.id
+        ORDER BY o.created_at DESC
+      `, [orderNumber]);
+
+      return rows.map(order => {
+        let items = [];
+        
+        // Handle items - they might be objects, arrays, or null
+        if (order.items) {
+          if (Array.isArray(order.items)) {
+            // Already an array
+            items = order.items.filter(item => item && item.id !== null);
+          } else if (typeof order.items === 'string') {
+            // JSON string that needs parsing
+            try {
+              const parsed = JSON.parse(order.items);
+              items = Array.isArray(parsed) ? parsed.filter(item => item && item.id !== null) : [];
+            } catch (error) {
+              console.log('⚠️ JSON parse error for order items:', order.items, error.message);
+              items = [];
+            }
+          } else if (typeof order.items === 'object') {
+            // Single object, wrap in array
+            items = [order.items].filter(item => item && item.id !== null);
+          }
+        }
+        
+        return {
+          ...order,
+          items: items,
+          total_amount: parseFloat(order.total_amount),
+          tax_amount: parseFloat(order.tax_amount),
+          tip_amount: parseFloat(order.tip_amount),
+          final_amount: parseFloat(order.final_amount)
+        };
+      });
+    } catch (error) {
+      throw new Error(`Error fetching orders by order number: ${error.message}`);
     }
   }
 
