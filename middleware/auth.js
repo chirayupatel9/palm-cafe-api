@@ -11,7 +11,12 @@ const auth = async (req, res, next) => {
       return res.status(401).json({ error: 'Access denied. No token provided.' });
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET);
+    // Add clock tolerance for timezone differences (5 minutes)
+    const decoded = jwt.verify(token, JWT_SECRET, { 
+      clockTolerance: 300, // 5 minutes tolerance
+      ignoreExpiration: false 
+    });
+    
     const user = await User.findById(decoded.userId);
     
     if (!user) {
@@ -21,7 +26,24 @@ const auth = async (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
-    res.status(401).json({ error: 'Invalid token.' });
+    console.error('JWT verification error:', error.message);
+    
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ 
+        error: 'Token has expired. Please log in again.',
+        code: 'TOKEN_EXPIRED'
+      });
+    } else if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ 
+        error: 'Invalid token format.',
+        code: 'INVALID_TOKEN'
+      });
+    } else {
+      return res.status(401).json({ 
+        error: 'Token verification failed.',
+        code: 'VERIFICATION_FAILED'
+      });
+    }
   }
 };
 

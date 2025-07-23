@@ -279,8 +279,18 @@ app.post('/api/auth/register', async (req, res) => {
     // Create new user
     const user = await User.create({ username, email, password });
     
-    // Generate JWT token
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '24h' });
+    // Generate JWT token with timezone-friendly settings
+    const token = jwt.sign(
+      { 
+        userId: user.id,
+        iat: Math.floor(Date.now() / 1000) // Explicit issue time
+      }, 
+      JWT_SECRET, 
+      { 
+        expiresIn: '24h',
+        algorithm: 'HS256'
+      }
+    );
 
     res.status(201).json({
       message: 'User registered successfully',
@@ -351,8 +361,18 @@ app.post('/api/auth/login', async (req, res) => {
     // Update last login
     await User.updateLastLogin(user.id);
 
-    // Generate JWT token
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '24h' });
+    // Generate JWT token with timezone-friendly settings
+    const token = jwt.sign(
+      { 
+        userId: user.id,
+        iat: Math.floor(Date.now() / 1000) // Explicit issue time
+      }, 
+      JWT_SECRET, 
+      { 
+        expiresIn: '24h',
+        algorithm: 'HS256'
+      }
+    );
 
     res.json({
       message: 'Login successful',
@@ -1670,6 +1690,10 @@ app.get('/api/health', async (req, res) => {
 // Initialize database and start server
 const startServer = async () => {
   try {
+    // Set timezone to UTC for consistent time handling
+    process.env.TZ = 'UTC';
+    console.log('🌍 Server timezone set to UTC for international compatibility');
+    
     // Test database connection
     const dbConnected = await testConnection();
     if (!dbConnected) {
