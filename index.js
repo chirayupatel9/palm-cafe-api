@@ -21,6 +21,7 @@ const Customer = require('./models/customer');
 const { auth, adminAuth, JWT_SECRET } = require('./middleware/auth');
 const logger = require('./config/logger');
 const { generalLimiter, authLimiter, uploadLimiter, apiLimiter } = require('./middleware/rateLimiter');
+const PaymentMethod = require('./models/paymentMethod');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -845,8 +846,8 @@ app.post('/api/menu/import', upload.single('file'), async (req, res) => {
   }
 });
 
-// Get current tax settings
-app.get('/api/tax-settings', async (req, res) => {
+// Get current tax settings (admin)
+app.get('/api/tax-settings', auth, async (req, res) => {
   try {
     const taxSettings = await TaxSettings.getCurrent();
     res.json(taxSettings);
@@ -856,10 +857,24 @@ app.get('/api/tax-settings', async (req, res) => {
   }
 });
 
-// Update tax settings
-app.put('/api/tax-settings', async (req, res) => {
+// Get tax settings for customer menu (public)
+app.get('/api/tax-settings/menu', async (req, res) => {
   try {
-    const { tax_rate, tax_name } = req.body;
+    const taxSettings = await TaxSettings.getCurrent();
+    // Only return show_tax_in_menu flag for customer menu
+    res.json({
+      show_tax_in_menu: taxSettings.show_tax_in_menu
+    });
+  } catch (error) {
+    console.error('Error fetching tax settings for menu:', error);
+    res.status(500).json({ error: 'Failed to fetch tax settings' });
+  }
+});
+
+// Update tax settings
+app.put('/api/tax-settings', auth, adminAuth, async (req, res) => {
+  try {
+    const { tax_rate, tax_name, show_tax_in_menu } = req.body;
     
     if (tax_rate === undefined || !tax_name) {
       return res.status(400).json({ error: 'Tax rate and tax name are required' });
@@ -867,7 +882,8 @@ app.put('/api/tax-settings', async (req, res) => {
 
     const updatedSettings = await TaxSettings.update({
       tax_rate: parseFloat(tax_rate),
-      tax_name: tax_name.trim()
+      tax_name: tax_name.trim(),
+      show_tax_in_menu: show_tax_in_menu !== undefined ? show_tax_in_menu : true
     });
 
     res.json(updatedSettings);
@@ -878,7 +894,7 @@ app.put('/api/tax-settings', async (req, res) => {
 });
 
 // Get tax history
-app.get('/api/tax-settings/history', async (req, res) => {
+app.get('/api/tax-settings/history', auth, adminAuth, async (req, res) => {
   try {
     const history = await TaxSettings.getHistory();
     res.json(history);
@@ -1061,29 +1077,49 @@ app.post('/api/invoices', async (req, res) => {
 
     const createdInvoice = await Invoice.create(invoiceData);
 
-    try {
-      const pdfBase64 = await generatePDF(createdInvoice);
-      res.json({
-        invoiceNumber,
-        orderNumber: createdOrder.order_number,
-        pdf: pdfBase64,
-        taxInfo: {
-          taxRate: taxCalculation.taxRate,
-          taxName: taxCalculation.taxName,
-          taxAmount: taxCalculation.taxAmount
-        }
-      });
-    } catch (error) {
-      console.error('Error generating PDF:', error);
-      res.status(500).json({ error: 'Failed to generate PDF' });
-    }
+    res.json({
+      invoiceNumber,
+      orderNumber: createdOrder.order_number,
+      taxInfo: {
+        taxRate: taxCalculation.taxRate,
+        taxName: taxCalculation.taxName,
+        taxAmount: taxCalculation.taxAmount
+      }
+    });
   } catch (error) {
     console.error('Error creating invoice:', error);
     res.status(500).json({ error: 'Failed to create invoice' });
   }
 });
 
-// Download invoice
+// Generate PDF for invoice
+app.get('/api/invoices/:invoiceNumber/pdf', async (req, res) => {
+  try {
+    const { invoiceNumber } = req.params;
+    
+    const invoice = await Invoice.getByNumber(invoiceNumber);
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    try {
+      const pdfBase64 = await generatePDF(invoice);
+      res.json({ 
+        success: true,
+        pdf: pdfBase64,
+        invoiceNumber: invoice.invoice_number
+      });
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      res.status(500).json({ error: 'Failed to generate PDF' });
+    }
+  } catch (error) {
+    console.error('Error generating PDF:', error);
+    res.status(500).json({ error: 'Failed to generate PDF' });
+  }
+});
+
+// Download invoice (legacy endpoint)
 app.get('/api/invoices/:invoiceNumber/download', async (req, res) => {
   try {
     const { invoiceNumber } = req.params;
@@ -1880,6 +1916,106 @@ app.get('/api/health', async (req, res) => {
       timestamp: new Date().toISOString(),
       error: error.message 
     });
+  }
+});
+
+// Payment Methods Routes
+
+// Get all payment methods (public)
+app.get('/api/payment-methods', async (req, res) => {
+  try {
+    const paymentMethods = await PaymentMethod.getAll();
+    res.json(paymentMethods);
+  } catch (error) {
+    console.error('Error fetching payment methods:', error);
+    res.status(500).json({ error: 'Failed to fetch payment methods' });
+  }
+});
+
+// Get all payment methods (admin)
+app.get('/api/admin/payment-methods', auth, adminAuth, async (req, res) => {
+  try {
+    const paymentMethods = await PaymentMethod.getAllForAdmin();
+    res.json(paymentMethods);
+  } catch (error) {
+    console.error('Error fetching payment methods:', error);
+    res.status(500).json({ error: 'Failed to fetch payment methods' });
+  }
+});
+
+// Create payment method (admin)
+app.post('/api/admin/payment-methods', auth, adminAuth, async (req, res) => {
+  try {
+    const paymentMethodData = req.body;
+    
+    if (!paymentMethodData.name || !paymentMethodData.code) {
+      return res.status(400).json({ error: 'Name and code are required' });
+    }
+
+    const newPaymentMethod = await PaymentMethod.create(paymentMethodData);
+    res.status(201).json(newPaymentMethod);
+  } catch (error) {
+    console.error('Error creating payment method:', error);
+    res.status(500).json({ error: 'Failed to create payment method', details: error.message });
+  }
+});
+
+// Update payment method (admin)
+app.put('/api/admin/payment-methods/:id', auth, adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const paymentMethodData = req.body;
+    
+    if (!paymentMethodData.name || !paymentMethodData.code) {
+      return res.status(400).json({ error: 'Name and code are required' });
+    }
+
+    const updatedPaymentMethod = await PaymentMethod.update(id, paymentMethodData);
+    res.json(updatedPaymentMethod);
+  } catch (error) {
+    console.error('Error updating payment method:', error);
+    res.status(500).json({ error: 'Failed to update payment method', details: error.message });
+  }
+});
+
+// Delete payment method (admin)
+app.delete('/api/admin/payment-methods/:id', auth, adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await PaymentMethod.delete(id);
+    res.json(result);
+  } catch (error) {
+    console.error('Error deleting payment method:', error);
+    res.status(500).json({ error: 'Failed to delete payment method', details: error.message });
+  }
+});
+
+// Toggle payment method status (admin)
+app.patch('/api/admin/payment-methods/:id/toggle', auth, adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updatedPaymentMethod = await PaymentMethod.toggleStatus(id);
+    res.json(updatedPaymentMethod);
+  } catch (error) {
+    console.error('Error toggling payment method status:', error);
+    res.status(500).json({ error: 'Failed to toggle payment method status', details: error.message });
+  }
+});
+
+// Reorder payment methods (admin)
+app.post('/api/admin/payment-methods/reorder', auth, adminAuth, async (req, res) => {
+  try {
+    const { orderedIds } = req.body;
+    
+    if (!orderedIds || !Array.isArray(orderedIds)) {
+      return res.status(400).json({ error: 'Ordered IDs array is required' });
+    }
+
+    const result = await PaymentMethod.reorder(orderedIds);
+    res.json(result);
+  } catch (error) {
+    console.error('Error reordering payment methods:', error);
+    res.status(500).json({ error: 'Failed to reorder payment methods', details: error.message });
   }
 });
 
