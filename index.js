@@ -1039,10 +1039,10 @@ app.post('/api/invoices', async (req, res) => {
     if (customer) {
       await pool.execute('UPDATE orders SET customer_id = ? WHERE id = ?', [customer.id, createdOrder.id]);
       
-      // Update customer loyalty data (earn points from order, deduct redeemed points)
-      const pointsEarned = Math.floor(total / 10); // 1 point per 10 INR
-      const netPointsChange = pointsEarned - pointsRedeemedNum;
-      await Customer.updateLoyaltyData(customer.id, total, netPointsChange);
+      // Only deduct redeemed points immediately (points earned will be added when order is completed)
+      if (pointsRedeemedNum > 0) {
+        await Customer.updateLoyaltyData(customer.id, 0, -pointsRedeemedNum);
+      }
     }
 
     const invoiceData = {
@@ -1527,8 +1527,47 @@ app.patch('/api/orders/:id/status', auth, async (req, res) => {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
+    // Get the current order to check if points were already awarded
+    const currentOrder = await Order.getById(id);
+    if (!currentOrder) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
     const updatedOrder = await Order.updateStatus(id, status);
-    res.json(updatedOrder);
+    
+    // Award loyalty points when order is completed (only if not already awarded)
+    let loyaltyUpdate = null;
+    if (status === 'completed' && currentOrder.status !== 'completed' && updatedOrder.customer_id && !currentOrder.points_awarded) {
+      try {
+        // Calculate points earned (1 point per 10 INR spent)
+        const pointsEarned = Math.floor(updatedOrder.final_amount / 10);
+        
+        // Update customer loyalty data
+        const updatedCustomer = await Customer.updateLoyaltyData(updatedOrder.customer_id, updatedOrder.final_amount, pointsEarned);
+        
+        // Mark points as awarded in the order
+        await Order.markPointsAwarded(id);
+        
+        loyaltyUpdate = {
+          pointsEarned,
+          newTotalPoints: updatedCustomer.loyalty_points,
+          message: `Awarded ${pointsEarned} loyalty points for completed order`
+        };
+        
+        console.log(`✅ Loyalty points awarded: ${pointsEarned} points to customer ${updatedOrder.customer_id}`);
+      } catch (loyaltyError) {
+        console.error('❌ Error awarding loyalty points:', loyaltyError);
+        loyaltyUpdate = {
+          error: 'Failed to award loyalty points',
+          details: loyaltyError.message
+        };
+      }
+    }
+    
+    res.json({
+      ...updatedOrder,
+      loyaltyUpdate
+    });
   } catch (error) {
     console.error('Error updating order status:', error);
     res.status(500).json({ error: 'Failed to update order status' });

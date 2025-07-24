@@ -22,6 +22,7 @@ class Order {
           o.tax_amount,
           o.tip_amount,
           o.points_redeemed,
+          o.points_awarded,
           o.final_amount,
           o.status,
           o.payment_method,
@@ -88,6 +89,7 @@ class Order {
           tax_amount: parseFloat(order.tax_amount),
           tip_amount: parseFloat(order.tip_amount),
           points_redeemed: parseInt(order.points_redeemed || 0),
+          points_awarded: Boolean(order.points_awarded),
           final_amount: parseFloat(order.final_amount)
         };
       });
@@ -107,12 +109,15 @@ class Order {
         SELECT 
           o.id,
           o.order_number,
+          o.customer_id,
           o.customer_name,
           o.customer_email,
           o.customer_phone,
           o.total_amount,
           o.tax_amount,
           o.tip_amount,
+          o.points_redeemed,
+          o.points_awarded,
           o.final_amount,
           o.status,
           o.payment_method,
@@ -163,14 +168,16 @@ class Order {
         }
       }
       
-      return {
-        ...order,
-        items: items,
-        total_amount: parseFloat(order.total_amount),
-        tax_amount: parseFloat(order.tax_amount),
-        tip_amount: parseFloat(order.tip_amount),
-        final_amount: parseFloat(order.final_amount)
-      };
+              return {
+          ...order,
+          items: items,
+          total_amount: parseFloat(order.total_amount),
+          tax_amount: parseFloat(order.tax_amount),
+          tip_amount: parseFloat(order.tip_amount),
+          points_redeemed: parseInt(order.points_redeemed || 0),
+          points_awarded: Boolean(order.points_awarded),
+          final_amount: parseFloat(order.final_amount)
+        };
     } catch (error) {
       throw new Error(`Error fetching order: ${error.message}`);
     }
@@ -287,6 +294,25 @@ class Order {
       return await this.getById(id);
     } catch (error) {
       throw new Error(`Error updating order status: ${error.message}`);
+    }
+  }
+
+  // Mark points as awarded for an order
+  static async markPointsAwarded(id) {
+    try {
+      const [result] = await pool.execute(`
+        UPDATE orders 
+        SET points_awarded = TRUE, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [id]);
+
+      if (result.affectedRows === 0) {
+        throw new Error('Order not found');
+      }
+
+      return await this.getById(id);
+    } catch (error) {
+      throw new Error(`Error marking points as awarded: ${error.message}`);
     }
   }
 
