@@ -9,11 +9,15 @@ const DB_NAME = process.env.DB_NAME ;
 // Import all migrations
 const migration001 = require('./migrations/migration-001-add-payment-method');
 const migration002 = require('./migrations/migration-002-update-to-inr');
+const migration003 = require('./migrations/migration-003-add-points-awarded');
+const migration004 = require('./migrations/migration-004-add-payment-methods');
 
 // List of migrations in order
 const migrations = [
   { name: '001-add-payment-method', run: migration001.runMigration },
-  { name: '002-update-to-inr', run: migration002.runMigration }
+  { name: '002-update-to-inr', run: migration002.runMigration },
+  { name: '003-add-points-awarded', run: migration003 },
+  { name: '004-add-payment-methods', run: migration004 }
 ];
 
 async function runMigrations() {

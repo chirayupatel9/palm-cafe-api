@@ -86,7 +86,7 @@ app.use(cors({
 app.options('*', cors());
 
 // Apply general rate limiting
-app.use(generalLimiter);
+// app.use(generalLimiter);
 
 // HTTP request logging
 app.use(morgan('combined', { stream: logger.stream }));
