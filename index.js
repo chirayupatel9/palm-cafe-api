@@ -53,14 +53,10 @@ app.use(cors({
     const allowedOrigins = [
       // Development origins
       'http://localhost:3000',
-      'http://127.0.0.1:3000', 
-      'http://localhost:3001',
-      'http://127.0.0.1:3001',
-      // Production origins
+      'http://127.0.0.1:3000',
       'https://palm-cafe-api-r6rx.vercel.app',
       'https://palm-cafe-ui.vercel.app',
-      'https://palm-cafe.vercel.app',
-      '*'
+      'https://*.vercel.app'
     ];
     
     // Check if origin is in allowed list
