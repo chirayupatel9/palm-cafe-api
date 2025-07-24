@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "Z:\\code\\palm-cafe\\palm-cafe-api\\logs\\.18b2539687b6d01192858ec60f30d2c006b59baf-audit.json",
+    "files": [
+        {
+            "date": 1753320046543,
+            "name": "Z:\\code\\palm-cafe\\palm-cafe-api\\logs\\error-2025-07-23.log",
+            "hash": "29ca229313c41bb430f40ac2f95f59b645e47f8931d2b50804e043d39f516506"
+        }
+    ],
+    "hashType": "sha256"
+}

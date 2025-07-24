@@ -7,6 +7,7 @@ const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');
+const morgan = require('morgan');
 const { initializeDatabase, testConnection, pool } = require('./config/database');
 const MenuItem = require('./models/menuItem');
 const Category = require('./models/category');
@@ -18,6 +19,8 @@ const Inventory = require('./models/inventory');
 const Order = require('./models/order');
 const Customer = require('./models/customer');
 const { auth, adminAuth, JWT_SECRET } = require('./middleware/auth');
+const logger = require('./config/logger');
+const { generalLimiter, authLimiter, uploadLimiter, apiLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -85,15 +88,21 @@ app.use(cors({
 // Handle preflight requests
 app.options('*', cors());
 
+// Apply general rate limiting
+app.use(generalLimiter);
+
+// HTTP request logging
+app.use(morgan('combined', { stream: logger.stream }));
+
 // Log CORS-related requests for debugging
 app.use((req, res, next) => {
   const origin = req.headers.origin || 'No origin';
   const userAgent = req.headers['user-agent'] || 'No user agent';
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - Origin: ${origin} - User-Agent: ${userAgent.substring(0, 50)}...`);
+  logger.info(`${req.method} ${req.path} - Origin: ${origin} - User-Agent: ${userAgent.substring(0, 50)}...`);
   
   // Log CORS preflight requests specifically
   if (req.method === 'OPTIONS') {
-    console.log(`CORS Preflight Request - Origin: ${origin}`);
+    logger.info(`CORS Preflight Request - Origin: ${origin}`);
   }
   
   next();
@@ -313,7 +322,7 @@ const generatePDF = async (invoice) => {
 // Authentication Routes
 
 // Register new user
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
     const { username, email, password } = req.body;
 
@@ -393,7 +402,7 @@ app.post('/api/auth/register-admin', auth, async (req, res) => {
 });
 
 // Login user
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -1343,7 +1352,7 @@ app.get('/api/inventory/template', auth, async (req, res) => {
 });
 
 // Import inventory from Excel
-app.post('/api/inventory/import', auth, upload.single('file'), async (req, res) => {
+app.post('/api/inventory/import', auth, uploadLimiter, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -1818,16 +1827,56 @@ app.post('/api/customers/:id/redeem-points', auth, async (req, res) => {
 app.get('/api/health', async (req, res) => {
   try {
     const dbConnected = await testConnection();
-    res.json({ 
+    const healthStatus = {
       status: 'OK', 
       timestamp: new Date().toISOString(),
-      database: dbConnected ? 'connected' : 'disconnected'
-    });
+      database: dbConnected ? 'connected' : 'disconnected',
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      version: process.env.npm_package_version || '1.0.0'
+    };
+    
+    logger.info('Health check passed', healthStatus);
+    res.json(healthStatus);
   } catch (error) {
+    logger.error('Health check failed:', error);
     res.status(500).json({ 
       status: 'ERROR', 
       timestamp: new Date().toISOString(),
       error: error.message 
+    });
+  }
+});
+
+// Backup endpoint (protected)
+app.post('/api/backup', auth, adminAuth, async (req, res) => {
+  try {
+    const DatabaseBackup = require('./scripts/backup');
+    const backup = new DatabaseBackup();
+    const result = await backup.performBackup();
+    
+    if (result.success) {
+      logger.info('Manual backup completed successfully', result);
+      res.json({ 
+        success: true, 
+        message: 'Backup completed successfully',
+        backupPath: result.backupPath,
+        stats: result.stats
+      });
+    } else {
+      logger.error('Manual backup failed:', result.error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Backup failed',
+        details: result.error
+      });
+    }
+  } catch (error) {
+    logger.error('Backup endpoint error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Backup failed',
+      details: error.message
     });
   }
 });
@@ -1837,26 +1886,27 @@ const startServer = async () => {
   try {
     // Set timezone to UTC for consistent time handling
     process.env.TZ = 'UTC';
-    console.log('🌍 Server timezone set to UTC for international compatibility');
+    logger.info('🌍 Server timezone set to UTC for international compatibility');
     
     // Test database connection
     const dbConnected = await testConnection();
     if (!dbConnected) {
-      console.error('Failed to connect to database. Please check your database configuration.');
+      logger.error('Failed to connect to database. Please check your database configuration.');
       process.exit(1);
     }
 
-    
+    // Initialize database
+    await initializeDatabase();
 
     // Start server
     app.listen(PORT, HOST, () => {
-      console.log(`Palm Cafe server running on ${HOST}:${PORT}`);
-      console.log(`API available at http://${HOST}:${PORT}/api`);
-      console.log(`Local access: http://localhost:${PORT}/api`);
-      console.log('Database connected and initialized successfully');
+      logger.info(`Palm Cafe server running on ${HOST}:${PORT}`);
+      logger.info(`API available at http://${HOST}:${PORT}/api`);
+      logger.info(`Local access: http://localhost:${PORT}/api`);
+      logger.info('Database connected and initialized successfully');
     });
   } catch (error) {
-    console.error('Failed to start server:', error);
+    logger.error('Failed to start server:', error);
     process.exit(1);
   }
 };

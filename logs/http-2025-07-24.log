@@ -1,0 +1,27 @@
+{"level":"info","message":"🌍 Server timezone set to UTC for international compatibility","timestamp":"2025-07-24 01:20:46:2046"}
+{"level":"info","message":"Palm Cafe server running on 0.0.0.0:5000","timestamp":"2025-07-24 01:20:50:2050"}
+{"level":"info","message":"API available at http://0.0.0.0:5000/api","timestamp":"2025-07-24 01:20:50:2050"}
+{"level":"info","message":"Local access: http://localhost:5000/api","timestamp":"2025-07-24 01:20:50:2050"}
+{"level":"info","message":"Database connected and initialized successfully","timestamp":"2025-07-24 01:20:50:2050"}
+{"level":"info","message":"🌍 Server timezone set to UTC for international compatibility","timestamp":"2025-07-24 01:22:33:2233"}
+{"level":"info","message":"Palm Cafe server running on 0.0.0.0:5000","timestamp":"2025-07-24 01:22:37:2237"}
+{"level":"info","message":"API available at http://0.0.0.0:5000/api","timestamp":"2025-07-24 01:22:37:2237"}
+{"level":"info","message":"Local access: http://localhost:5000/api","timestamp":"2025-07-24 01:22:37:2237"}
+{"level":"info","message":"Database connected and initialized successfully","timestamp":"2025-07-24 01:22:37:2237"}
+{"level":"info","message":"🌍 Server timezone set to UTC for international compatibility","timestamp":"2025-07-24 01:23:00:230"}
+{"level":"info","message":"Palm Cafe server running on 0.0.0.0:5000","timestamp":"2025-07-24 01:23:04:234"}
+{"level":"info","message":"API available at http://0.0.0.0:5000/api","timestamp":"2025-07-24 01:23:04:234"}
+{"level":"info","message":"Local access: http://localhost:5000/api","timestamp":"2025-07-24 01:23:04:234"}
+{"level":"info","message":"Database connected and initialized successfully","timestamp":"2025-07-24 01:23:04:234"}
+{"level":"info","message":"GET /api/currency-settings - Origin: http://localhost:3000 - User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb...","timestamp":"2025-07-24 01:23:55:2355"}
+{"level":"http","message":"127.0.0.1 - - [24/Jul/2025:01:23:56 +0000] \"GET /api/currency-settings HTTP/1.1\" 304 - \"http://localhost:3000/\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36\"","timestamp":"2025-07-24 01:23:56:2356"}
+{"level":"info","message":"GET /api/currency-settings - Origin: http://localhost:3000 - User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb...","timestamp":"2025-07-24 01:23:56:2356"}
+{"level":"http","message":"127.0.0.1 - - [24/Jul/2025:01:23:56 +0000] \"GET /api/currency-settings HTTP/1.1\" 304 - \"http://localhost:3000/\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36\"","timestamp":"2025-07-24 01:23:56:2356"}
+{"level":"info","message":"POST /api/auth/login - Origin: http://localhost:3000 - User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb...","timestamp":"2025-07-24 01:24:09:249"}
+{"level":"http","message":"127.0.0.1 - - [24/Jul/2025:01:24:11 +0000] \"POST /api/auth/login HTTP/1.1\" 200 263 \"http://localhost:3000/\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36\"","timestamp":"2025-07-24 01:24:11:2411"}
+{"level":"info","message":"GET /api/menu - Origin: http://localhost:3000 - User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb...","timestamp":"2025-07-24 01:24:11:2411"}
+{"level":"info","message":"GET /api/auth/profile - Origin: http://localhost:3000 - User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb...","timestamp":"2025-07-24 01:24:11:2411"}
+{"level":"http","message":"127.0.0.1 - - [24/Jul/2025:01:24:11 +0000] \"GET /api/menu HTTP/1.1\" 200 2222 \"http://localhost:3000/\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36\"","timestamp":"2025-07-24 01:24:11:2411"}
+{"level":"info","message":"GET /api/menu - Origin: http://localhost:3000 - User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb...","timestamp":"2025-07-24 01:24:11:2411"}
+{"level":"http","message":"127.0.0.1 - - [24/Jul/2025:01:24:11 +0000] \"GET /api/menu HTTP/1.1\" 304 - \"http://localhost:3000/\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36\"","timestamp":"2025-07-24 01:24:11:2411"}
+{"level":"http","message":"127.0.0.1 - - [24/Jul/2025:01:24:13 +0000] \"GET /api/auth/profile HTTP/1.1\" 304 - \"http://localhost:3000/\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36\"","timestamp":"2025-07-24 01:24:13:2413"}
