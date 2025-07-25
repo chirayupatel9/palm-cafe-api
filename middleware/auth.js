@@ -69,4 +69,17 @@ const adminAuth = async (req, res, next) => {
   }
 };
 
-module.exports = { auth, adminAuth, JWT_SECRET }; 
+const chefAuth = async (req, res, next) => {
+  try {
+    await auth(req, res, () => {
+      if (req.user.role !== 'chef' && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Access denied. Chef or admin privileges required.' });
+      }
+      next();
+    });
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid token.' });
+  }
+};
+
+module.exports = { auth, adminAuth, chefAuth, JWT_SECRET }; 

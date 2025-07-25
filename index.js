@@ -18,7 +18,7 @@ const User = require('./models/user');
 const Inventory = require('./models/inventory');
 const Order = require('./models/order');
 const Customer = require('./models/customer');
-const { auth, adminAuth, JWT_SECRET } = require('./middleware/auth');
+const { auth, adminAuth, chefAuth, JWT_SECRET } = require('./middleware/auth');
 const logger = require('./config/logger');
 const { generalLimiter, authLimiter, uploadLimiter, apiLimiter } = require('./middleware/rateLimiter');
 const PaymentMethod = require('./models/paymentMethod');
@@ -395,6 +395,39 @@ app.post('/api/auth/register-admin', auth, async (req, res) => {
   } catch (error) {
     console.error('Admin registration error:', error);
     res.status(500).json({ error: 'Failed to register admin' });
+  }
+});
+
+// Register new chef (requires existing admin authentication)
+app.post('/api/auth/register-chef', chefAuth, async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+
+    // Validate input
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findByEmail(email);
+    if (existingUser) {
+      return res.status(400).json({ error: 'User with this email already exists' });
+    }
+
+    // Create new chef user
+    const user = await User.create({ username, email, password, role: 'chef' });
+
+    res.status(201).json({
+      message: 'Chef registered successfully',
+      user: { id: user.id, username: user.username, email: user.email, role: user.role }
+    });
+  } catch (error) {
+    console.error('Chef registration error:', error);
+    res.status(500).json({ error: 'Failed to register chef' });
   }
 });
 
