@@ -183,6 +183,8 @@ async function createDatabase() {
         tax_name VARCHAR(100) NOT NULL DEFAULT 'Sales Tax',
         tax_rate DECIMAL(5,2) NOT NULL DEFAULT 0.00,
         is_active BOOLEAN DEFAULT TRUE,
+        show_tax_in_menu BOOLEAN DEFAULT TRUE,
+        include_tax BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

@@ -874,7 +874,7 @@ app.get('/api/tax-settings/menu', async (req, res) => {
 // Update tax settings
 app.put('/api/tax-settings', auth, adminAuth, async (req, res) => {
   try {
-    const { tax_rate, tax_name, show_tax_in_menu } = req.body;
+    const { tax_rate, tax_name, show_tax_in_menu, include_tax } = req.body;
     
     if (tax_rate === undefined || !tax_name) {
       return res.status(400).json({ error: 'Tax rate and tax name are required' });
@@ -883,7 +883,8 @@ app.put('/api/tax-settings', auth, adminAuth, async (req, res) => {
     const updatedSettings = await TaxSettings.update({
       tax_rate: parseFloat(tax_rate),
       tax_name: tax_name.trim(),
-      show_tax_in_menu: show_tax_in_menu !== undefined ? show_tax_in_menu : true
+      show_tax_in_menu: show_tax_in_menu !== undefined ? show_tax_in_menu : true,
+      include_tax: include_tax !== undefined ? include_tax : true
     });
 
     res.json(updatedSettings);
