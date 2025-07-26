@@ -1024,7 +1024,7 @@ app.get('/api/invoices', async (req, res) => {
 // Create new invoice
 app.post('/api/invoices', async (req, res) => {
   try {
-    const { customerName, customerPhone, customerEmail, paymentMethod, items, tipAmount, pointsRedeemed, date } = req.body;
+    const { customerName, customerPhone, customerEmail, paymentMethod, items, tipAmount, pointsRedeemed, date, splitPayment, splitPaymentMethod, splitAmount } = req.body;
     
     if (!customerName || !items || items.length === 0) {
       return res.status(400).json({ error: 'Customer name and items are required' });
@@ -1043,6 +1043,20 @@ app.post('/api/invoices', async (req, res) => {
     const pointsRedeemedNum = parseInt(pointsRedeemed) || 0;
     const pointsDiscount = pointsRedeemedNum * 0.1; // 1 point = 0.1 INR
     const total = subtotal + taxCalculation.taxAmount + tipAmountNum - pointsDiscount;
+
+    // Handle split payment validation
+    const splitPaymentEnabled = Boolean(splitPayment);
+    const splitAmountNum = parseFloat(splitAmount) || 0;
+    const splitPaymentMethodStr = splitPaymentMethod || 'upi';
+    
+    if (splitPaymentEnabled) {
+      if (splitAmountNum <= 0) {
+        return res.status(400).json({ error: 'Split payment amount must be greater than 0' });
+      }
+      if (splitAmountNum >= total) {
+        return res.status(400).json({ error: 'Split payment amount cannot be greater than or equal to total amount' });
+      }
+    }
 
     // Check if customer exists or create new one
     let customer = null;
@@ -1080,6 +1094,9 @@ app.post('/api/invoices', async (req, res) => {
       points_redeemed: pointsRedeemedNum,
       final_amount: total,
       payment_method: paymentMethod || 'cash',
+      split_payment: splitPaymentEnabled,
+      split_payment_method: splitPaymentMethodStr,
+      split_amount: splitAmountNum,
       notes: ''
     };
 
@@ -1101,6 +1118,9 @@ app.post('/api/invoices', async (req, res) => {
       customerName,
       customerPhone,
       paymentMethod: paymentMethod || 'cash',
+      splitPayment: splitPaymentEnabled,
+      splitPaymentMethod: splitPaymentMethodStr,
+      splitAmount: splitAmountNum,
       items,
       subtotal,
       taxAmount: taxCalculation.taxAmount,

@@ -26,6 +26,9 @@ class Order {
           o.final_amount,
           o.status,
           o.payment_method,
+          o.split_payment,
+          o.split_payment_method,
+          o.split_amount,
           o.notes,
           o.created_at,
           o.updated_at,
@@ -90,7 +93,9 @@ class Order {
           tip_amount: parseFloat(order.tip_amount),
           points_redeemed: parseInt(order.points_redeemed || 0),
           points_awarded: Boolean(order.points_awarded),
-          final_amount: parseFloat(order.final_amount)
+          final_amount: parseFloat(order.final_amount),
+          split_payment: Boolean(order.split_payment),
+          split_amount: parseFloat(order.split_amount || 0)
         };
       });
       
@@ -121,6 +126,9 @@ class Order {
           o.final_amount,
           o.status,
           o.payment_method,
+          o.split_payment,
+          o.split_payment_method,
+          o.split_amount,
           o.notes,
           o.created_at,
           o.updated_at,
@@ -168,16 +176,18 @@ class Order {
         }
       }
       
-              return {
-          ...order,
-          items: items,
-          total_amount: parseFloat(order.total_amount),
-          tax_amount: parseFloat(order.tax_amount),
-          tip_amount: parseFloat(order.tip_amount),
-          points_redeemed: parseInt(order.points_redeemed || 0),
-          points_awarded: Boolean(order.points_awarded),
-          final_amount: parseFloat(order.final_amount)
-        };
+      return {
+        ...order,
+        items: items,
+        total_amount: parseFloat(order.total_amount),
+        tax_amount: parseFloat(order.tax_amount),
+        tip_amount: parseFloat(order.tip_amount),
+        points_redeemed: parseInt(order.points_redeemed || 0),
+        points_awarded: Boolean(order.points_awarded),
+        final_amount: parseFloat(order.final_amount),
+        split_payment: Boolean(order.split_payment),
+        split_amount: parseFloat(order.split_amount || 0)
+      };
     } catch (error) {
       throw new Error(`Error fetching order: ${error.message}`);
     }
@@ -200,6 +210,9 @@ class Order {
         tip_amount,
         final_amount,
         payment_method,
+        split_payment,
+        split_payment_method,
+        split_amount,
         notes
       } = orderData;
 
@@ -207,7 +220,9 @@ class Order {
         customer_name,
         items_count: items.length,
         total_amount,
-        final_amount
+        final_amount,
+        split_payment,
+        split_amount
       });
 
       // Generate order number
@@ -223,6 +238,9 @@ class Order {
       const safeTipAmount = tip_amount || 0;
       const safeFinalAmount = final_amount || 0;
       const safePaymentMethod = payment_method || null;
+      const safeSplitPayment = Boolean(split_payment);
+      const safeSplitPaymentMethod = split_payment_method || null;
+      const safeSplitAmount = split_amount || 0;
       const safeNotes = notes || null;
 
       // Create order
@@ -230,12 +248,12 @@ class Order {
         INSERT INTO orders (
           order_number, customer_id, customer_name, customer_email, customer_phone,
           total_amount, tax_amount, tip_amount, points_redeemed, final_amount,
-          payment_method, notes, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+          payment_method, split_payment, split_payment_method, split_amount, notes, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
       `, [
         orderNumber, null, safeCustomerName, safeCustomerEmail, safeCustomerPhone,
         safeTotalAmount, safeTaxAmount, safeTipAmount, orderData.points_redeemed || 0, safeFinalAmount,
-        safePaymentMethod, safeNotes
+        safePaymentMethod, safeSplitPayment, safeSplitPaymentMethod, safeSplitAmount, safeNotes
       ]);
 
       const orderId = orderResult.insertId;
