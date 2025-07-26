@@ -1024,7 +1024,7 @@ app.get('/api/invoices', async (req, res) => {
 // Create new invoice
 app.post('/api/invoices', async (req, res) => {
   try {
-    const { customerName, customerPhone, customerEmail, paymentMethod, items, tipAmount, pointsRedeemed, date, splitPayment, splitPaymentMethod, splitAmount } = req.body;
+    const { customerName, customerPhone, customerEmail, paymentMethod, items, tipAmount, pointsRedeemed, date, splitPayment, splitPaymentMethod, splitAmount, extraCharge, extraChargeNote } = req.body;
     
     if (!customerName || !items || items.length === 0) {
       return res.status(400).json({ error: 'Customer name and items are required' });
@@ -1042,7 +1042,8 @@ app.post('/api/invoices', async (req, res) => {
     const tipAmountNum = parseFloat(tipAmount) || 0;
     const pointsRedeemedNum = parseInt(pointsRedeemed) || 0;
     const pointsDiscount = pointsRedeemedNum * 0.1; // 1 point = 0.1 INR
-    const total = subtotal + taxCalculation.taxAmount + tipAmountNum - pointsDiscount;
+    const extraChargeNum = parseFloat(extraCharge) || 0;
+    const total = subtotal + taxCalculation.taxAmount + tipAmountNum - pointsDiscount + extraChargeNum;
 
     // Handle split payment validation
     const splitPaymentEnabled = Boolean(splitPayment);
@@ -1097,6 +1098,8 @@ app.post('/api/invoices', async (req, res) => {
       split_payment: splitPaymentEnabled,
       split_payment_method: splitPaymentMethodStr,
       split_amount: splitAmountNum,
+      extra_charge: extraChargeNum,
+      extra_charge_note: extraChargeNote || null,
       notes: ''
     };
 

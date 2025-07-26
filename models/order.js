@@ -95,7 +95,9 @@ class Order {
           points_awarded: Boolean(order.points_awarded),
           final_amount: parseFloat(order.final_amount),
           split_payment: Boolean(order.split_payment),
-          split_amount: parseFloat(order.split_amount || 0)
+          split_amount: parseFloat(order.split_amount || 0),
+          extra_charge: parseFloat(order.extra_charge || 0),
+          extra_charge_note: order.extra_charge_note || null
         };
       });
       
@@ -186,7 +188,9 @@ class Order {
         points_awarded: Boolean(order.points_awarded),
         final_amount: parseFloat(order.final_amount),
         split_payment: Boolean(order.split_payment),
-        split_amount: parseFloat(order.split_amount || 0)
+        split_amount: parseFloat(order.split_amount || 0),
+        extra_charge: parseFloat(order.extra_charge || 0),
+        extra_charge_note: order.extra_charge_note || null
       };
     } catch (error) {
       throw new Error(`Error fetching order: ${error.message}`);
@@ -213,6 +217,8 @@ class Order {
         split_payment,
         split_payment_method,
         split_amount,
+        extra_charge,
+        extra_charge_note,
         notes
       } = orderData;
 
@@ -241,6 +247,8 @@ class Order {
       const safeSplitPayment = Boolean(split_payment);
       const safeSplitPaymentMethod = split_payment_method || null;
       const safeSplitAmount = split_amount || 0;
+      const safeExtraCharge = extra_charge || 0;
+      const safeExtraChargeNote = extra_charge_note || null;
       const safeNotes = notes || null;
 
       // Create order
@@ -248,12 +256,12 @@ class Order {
         INSERT INTO orders (
           order_number, customer_id, customer_name, customer_email, customer_phone,
           total_amount, tax_amount, tip_amount, points_redeemed, final_amount,
-          payment_method, split_payment, split_payment_method, split_amount, notes, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+          payment_method, split_payment, split_payment_method, split_amount, extra_charge, extra_charge_note, notes, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
       `, [
         orderNumber, null, safeCustomerName, safeCustomerEmail, safeCustomerPhone,
         safeTotalAmount, safeTaxAmount, safeTipAmount, orderData.points_redeemed || 0, safeFinalAmount,
-        safePaymentMethod, safeSplitPayment, safeSplitPaymentMethod, safeSplitAmount, safeNotes
+        safePaymentMethod, safeSplitPayment, safeSplitPaymentMethod, safeSplitAmount, safeExtraCharge, safeExtraChargeNote, safeNotes
       ]);
 
       const orderId = orderResult.insertId;
