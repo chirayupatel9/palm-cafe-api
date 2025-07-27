@@ -1640,7 +1640,7 @@ app.patch('/api/orders/:id/status', auth, async (req, res) => {
         // Calculate points earned (1 point per 10 INR spent)
         const pointsEarned = Math.floor(updatedOrder.final_amount / 10);
         
-        // Update customer loyalty data
+        // Update customer loyalty data - pass pointsEarned as pointsChange to override automatic calculation
         const updatedCustomer = await Customer.updateLoyaltyData(updatedOrder.customer_id, updatedOrder.final_amount, pointsEarned);
         
         // Mark points as awarded in the order
