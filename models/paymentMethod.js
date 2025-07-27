@@ -236,10 +236,9 @@ class PaymentMethod {
         for (const defaultMethod of defaults) {
           await this.create(defaultMethod);
         }
-        console.log('✅ Default payment methods initialized');
       }
     } catch (error) {
-      console.error('❌ Error initializing default payment methods:', error);
+      console.error('Error initializing default payment methods:', error);
     }
   }
 }

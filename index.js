@@ -1652,9 +1652,8 @@ app.patch('/api/orders/:id/status', auth, async (req, res) => {
           message: `Awarded ${pointsEarned} loyalty points for completed order`
         };
         
-        console.log(`✅ Loyalty points awarded: ${pointsEarned} points to customer ${updatedOrder.customer_id}`);
       } catch (loyaltyError) {
-        console.error('❌ Error awarding loyalty points:', loyaltyError);
+        console.error('Error awarding loyalty points:', loyaltyError);
         loyaltyUpdate = {
           error: 'Failed to award loyalty points',
           details: loyaltyError.message
@@ -1692,11 +1691,8 @@ app.post('/api/orders', auth, async (req, res) => {
 // Create test order (for debugging)
 app.post('/api/orders/test', auth, async (req, res) => {
   try {
-    console.log('🔍 Creating test order...');
-    
     // First, let's get available menu items
     const menuItems = await MenuItem.getAll();
-    console.log('📋 Available menu items:', menuItems.length);
     
     if (menuItems.length === 0) {
       return res.status(400).json({ error: 'No menu items available. Please add menu items first.' });
@@ -1705,8 +1701,6 @@ app.post('/api/orders/test', auth, async (req, res) => {
     // Use the first available menu item
     const firstItem = menuItems[0];
     const secondItem = menuItems[1] || firstItem; // Use first item twice if only one exists
-    
-    console.log('🍽️ Using menu items:', { first: firstItem.name, second: secondItem.name });
     
     const testOrder = {
       customer_name: 'Test Customer',
@@ -1735,14 +1729,11 @@ app.post('/api/orders/test', auth, async (req, res) => {
       payment_method: 'cash',
       notes: 'Test order for kitchen display'
     };
-
-    console.log('📝 Test order data:', testOrder);
     
     const newOrder = await Order.create(testOrder);
-    console.log('✅ Test order created successfully:', newOrder.id);
     res.status(201).json(newOrder);
   } catch (error) {
-    console.error('❌ Error creating test order:', error);
+    console.error('Error creating test order:', error);
     res.status(500).json({ error: 'Failed to create test order', details: error.message });
   }
 });

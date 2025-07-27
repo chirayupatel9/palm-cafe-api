@@ -4,11 +4,7 @@ class Order {
   // Get all orders
   static async getAll() {
     try {
-      console.log('🔍 Fetching all orders...');
-      
-      // First, let's check if there are any orders at all
       const [orderCount] = await pool.execute('SELECT COUNT(*) as count FROM orders');
-      console.log('📊 Total orders in database:', orderCount[0].count);
       
       const [rows] = await pool.execute(`
         SELECT 
@@ -49,41 +45,27 @@ class Order {
         ORDER BY o.created_at DESC
       `);
       
-      console.log('✅ Orders fetched successfully:', rows.length);
-      
       const result = rows.map(order => {
         let items = [];
-        
-        // Debug: Log the type and content of items
-        console.log(`🔍 Order ${order.id} items type:`, typeof order.items);
-        console.log(`🔍 Order ${order.id} items content:`, order.items);
         
         // Handle items - they might be objects, arrays, or null
         if (order.items) {
           if (Array.isArray(order.items)) {
             // Already an array
-            console.log(`✅ Order ${order.id}: Items is already an array`);
             items = order.items.filter(item => item && item.id !== null);
           } else if (typeof order.items === 'string') {
             // JSON string that needs parsing
-            console.log(`📝 Order ${order.id}: Items is a string, parsing JSON`);
             try {
               const parsed = JSON.parse(order.items);
               items = Array.isArray(parsed) ? parsed.filter(item => item && item.id !== null) : [];
             } catch (error) {
-              console.log('⚠️ JSON parse error for order items:', order.items, error.message);
               items = [];
             }
           } else if (typeof order.items === 'object') {
             // Single object, wrap in array
-            console.log(`📦 Order ${order.id}: Items is an object, wrapping in array`);
             items = [order.items].filter(item => item && item.id !== null);
           }
-        } else {
-          console.log(`❌ Order ${order.id}: No items found`);
         }
-        
-        console.log(`📋 Order ${order.id}: Final items count:`, items.length);
         
         return {
           ...order,
@@ -101,10 +83,9 @@ class Order {
         };
       });
       
-      console.log('📋 Processed orders:', result.length);
       return result;
     } catch (error) {
-      console.error('❌ Error in getAll:', error);
+      console.error('Error in getAll:', error);
       throw new Error(`Error fetching orders: ${error.message}`);
     }
   }
@@ -169,7 +150,6 @@ class Order {
             const parsed = JSON.parse(order.items);
             items = Array.isArray(parsed) ? parsed.filter(item => item && item.id !== null) : [];
           } catch (error) {
-            console.log('⚠️ JSON parse error for order items:', order.items, error.message);
             items = [];
           }
         } else if (typeof order.items === 'object') {
@@ -201,7 +181,6 @@ class Order {
   static async create(orderData) {
     const connection = await pool.getConnection();
     try {
-      console.log('🔍 Order.create: Starting order creation...');
       await connection.beginTransaction();
 
       const {
@@ -222,18 +201,8 @@ class Order {
         notes
       } = orderData;
 
-      console.log('📝 Order.create: Order data received:', {
-        customer_name,
-        items_count: items.length,
-        total_amount,
-        final_amount,
-        split_payment,
-        split_amount
-      });
-
       // Generate order number
       const orderNumber = `ORD${Date.now()}`;
-      console.log('🔢 Order.create: Generated order number:', orderNumber);
 
       // Handle undefined values by converting them to null
       const safeCustomerName = customer_name || null;
@@ -265,13 +234,9 @@ class Order {
       ]);
 
       const orderId = orderResult.insertId;
-      console.log('✅ Order.create: Order created with ID:', orderId);
 
       // Create order items
-      console.log('🍽️ Order.create: Creating order items...');
       for (const item of items) {
-        console.log('📦 Order.create: Processing item:', item);
-        
         // Handle undefined values for order items
         const safeMenuItemId = item.menu_item_id || item.id || null;
         const safeItemName = item.name || null;
@@ -286,17 +251,14 @@ class Order {
         `, [
           orderId, safeMenuItemId, safeItemName, safeQuantity, safeUnitPrice, safeTotalPrice
         ]);
-        console.log('✅ Order.create: Item created successfully');
       }
 
       await connection.commit();
-      console.log('✅ Order.create: Transaction committed successfully');
       
       const result = await this.getById(orderId);
-      console.log('✅ Order.create: Returning created order:', result.id);
       return result;
     } catch (error) {
-      console.error('❌ Order.create: Error occurred:', error);
+      console.error('Error creating order:', error);
       await connection.rollback();
       throw new Error(`Error creating order: ${error.message}`);
     } finally {
@@ -393,7 +355,6 @@ class Order {
               const parsed = JSON.parse(order.items);
               items = Array.isArray(parsed) ? parsed.filter(item => item && item.id !== null) : [];
             } catch (error) {
-              console.log('⚠️ JSON parse error for order items:', order.items, error.message);
               items = [];
             }
           } else if (typeof order.items === 'object') {
@@ -467,7 +428,6 @@ class Order {
               const parsed = JSON.parse(order.items);
               items = Array.isArray(parsed) ? parsed.filter(item => item && item.id !== null) : [];
             } catch (error) {
-              console.log('⚠️ JSON parse error for order items:', order.items, error.message);
               items = [];
             }
           } else if (typeof order.items === 'object') {
@@ -541,7 +501,6 @@ class Order {
               const parsed = JSON.parse(order.items);
               items = Array.isArray(parsed) ? parsed.filter(item => item && item.id !== null) : [];
             } catch (error) {
-              console.log('⚠️ JSON parse error for order items:', order.items, error.message);
               items = [];
             }
           } else if (typeof order.items === 'object') {
