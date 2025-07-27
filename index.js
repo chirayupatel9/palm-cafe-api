@@ -1022,7 +1022,7 @@ app.get('/api/invoices', async (req, res) => {
 });
 
 // Create new invoice
-app.post('/api/invoices', async (req, res) => {
+app.post('/api/invoices', auth, async (req, res) => {
   try {
     const { customerName, customerPhone, customerEmail, paymentMethod, items, tipAmount, pointsRedeemed, date, splitPayment, splitPaymentMethod, splitAmount, extraCharge, extraChargeNote } = req.body;
     
@@ -1045,12 +1045,17 @@ app.post('/api/invoices', async (req, res) => {
     const extraChargeNum = parseFloat(extraCharge) || 0;
     const total = subtotal + taxCalculation.taxAmount + tipAmountNum - pointsDiscount + extraChargeNum;
 
-    // Handle split payment validation
+    // Handle split payment validation - only admins can use split payment
     const splitPaymentEnabled = Boolean(splitPayment);
     const splitAmountNum = parseFloat(splitAmount) || 0;
     const splitPaymentMethodStr = splitPaymentMethod || 'upi';
     
     if (splitPaymentEnabled) {
+      // Check if user is admin
+      if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Split payment is only available for administrators' });
+      }
+      
       if (splitAmountNum <= 0) {
         return res.status(400).json({ error: 'Split payment amount must be greater than 0' });
       }
