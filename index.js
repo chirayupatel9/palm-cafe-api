@@ -1610,6 +1610,101 @@ app.get('/api/customer/orders', async (req, res) => {
   }
 });
 
+// Create customer order (public endpoint)
+app.post('/api/customer/orders', async (req, res) => {
+  try {
+    const { customerName, customerPhone, customerEmail, paymentMethod, items, tipAmount, pointsRedeemed, date, pickupOption } = req.body;
+    
+    if (!customerName || !items || items.length === 0) {
+      return res.status(400).json({ error: 'Customer name and items are required' });
+    }
+
+    // Calculate subtotal
+    const subtotal = items.reduce((sum, item) => sum + (parseFloat(item.price) * item.quantity), 0);
+    
+    // Calculate tax
+    const taxCalculation = await TaxSettings.calculateTax(subtotal);
+    
+    // Calculate total
+    const tipAmountNum = parseFloat(tipAmount) || 0;
+    const pointsRedeemedNum = parseInt(pointsRedeemed) || 0;
+    const pointsDiscount = pointsRedeemedNum * 0.1; // 1 point = 0.1 INR
+    const total = subtotal + taxCalculation.taxAmount + tipAmountNum - pointsDiscount;
+
+    // Check if customer exists or create new one
+    let customer = null;
+    if (customerPhone || customerName) {
+      customer = await Customer.findByEmailOrPhone(customerName, customerPhone);
+      
+      if (!customer && customerPhone) {
+        // Create new customer if phone number provided
+        customer = await Customer.create({
+          name: customerName,
+          phone: customerPhone,
+          email: customerEmail || null,
+          address: null,
+          date_of_birth: null,
+          notes: 'Auto-created from customer order'
+        });
+      }
+    }
+
+    // Create order data
+    const orderData = {
+      customer_name: customerName,
+      customer_email: customerEmail || null,
+      customer_phone: customerPhone,
+      items: items.map(item => ({
+        menu_item_id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        price: parseFloat(item.price),
+        total: parseFloat(item.price) * item.quantity
+      })),
+      total_amount: subtotal,
+      tax_amount: taxCalculation.taxAmount,
+      tip_amount: tipAmountNum,
+      points_redeemed: pointsRedeemedNum,
+      final_amount: total,
+      payment_method: paymentMethod || 'cash',
+      split_payment: false, // Customers cannot use split payment
+      split_payment_method: null,
+      split_amount: 0,
+      extra_charge: 0,
+      extra_charge_note: null,
+      notes: pickupOption === 'delivery' ? 'Delivery order' : 'Pickup order'
+    };
+
+    const createdOrder = await Order.create(orderData);
+
+    // Update order with customer_id if customer exists
+    if (customer) {
+      await pool.execute('UPDATE orders SET customer_id = ? WHERE id = ?', [customer.id, createdOrder.id]);
+      
+      // Only deduct redeemed points immediately (points earned will be added when order is completed)
+      if (pointsRedeemedNum > 0) {
+        await Customer.updateLoyaltyData(customer.id, 0, -pointsRedeemedNum);
+      }
+    }
+
+    res.status(201).json({
+      orderNumber: createdOrder.order_number,
+      orderId: createdOrder.id,
+      customerName,
+      customerPhone,
+      items,
+      subtotal,
+      taxAmount: taxCalculation.taxAmount,
+      tipAmount: tipAmountNum,
+      total,
+      status: 'pending'
+    });
+  } catch (error) {
+    console.error('Error creating customer order:', error);
+    res.status(500).json({ error: 'Failed to create order' });
+  }
+});
+
 // Update order status
 app.patch('/api/orders/:id/status', auth, async (req, res) => {
   try {
