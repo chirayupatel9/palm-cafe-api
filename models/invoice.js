@@ -115,6 +115,63 @@ class Invoice {
     }
   }
 
+  // Get invoice by order number
+  static async getByOrderNumber(orderNumber) {
+    try {
+      const [invoices] = await pool.execute(`
+        SELECT 
+          i.invoice_number,
+          i.order_id,
+          i.customer_name,
+          i.customer_phone,
+          i.payment_method,
+          i.subtotal,
+          i.tax_amount,
+          i.tip_amount,
+          i.total_amount,
+          i.invoice_date,
+          i.created_at,
+          o.order_number
+        FROM invoices i
+        LEFT JOIN orders o ON i.order_id = o.id
+        WHERE o.order_number = ?
+      `, [orderNumber]);
+
+      if (invoices.length === 0) {
+        return null;
+      }
+
+      const invoice = invoices[0];
+
+      // Get items for the invoice
+      const [items] = await pool.execute(`
+        SELECT 
+          menu_item_id,
+          item_name,
+          price,
+          quantity,
+          total
+        FROM invoice_items 
+        WHERE invoice_number = ?
+      `, [invoice.invoice_number]);
+
+      return {
+        ...invoice,
+        subtotal: parseFloat(invoice.subtotal),
+        tax_amount: parseFloat(invoice.tax_amount),
+        tip_amount: parseFloat(invoice.tip_amount),
+        total_amount: parseFloat(invoice.total_amount),
+        items: items.map(item => ({
+          ...item,
+          price: parseFloat(item.price),
+          total: parseFloat(item.total)
+        }))
+      };
+    } catch (error) {
+      throw new Error(`Error fetching invoice by order number: ${error.message}`);
+    }
+  }
+
   // Create new invoice with items
   static async create(invoiceData) {
     const connection = await pool.getConnection();

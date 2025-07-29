@@ -1204,6 +1204,23 @@ app.get('/api/invoices/:invoiceNumber/download', async (req, res) => {
   }
 });
 
+// Get invoice by order number
+app.get('/api/invoices/order/:orderNumber', async (req, res) => {
+  try {
+    const { orderNumber } = req.params;
+    
+    const invoice = await Invoice.getByOrderNumber(orderNumber);
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found for this order' });
+    }
+
+    res.json(invoice);
+  } catch (error) {
+    console.error('Error fetching invoice by order number:', error);
+    res.status(500).json({ error: 'Failed to fetch invoice' });
+  }
+});
+
 // Get invoice statistics
 app.get('/api/statistics', async (req, res) => {
   try {
