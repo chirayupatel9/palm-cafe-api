@@ -53,6 +53,7 @@ app.use(cors({
     
     const allowedOrigins = [
       // Development origins
+      'https://palmcafe.nevyaa.com',
       'http://localhost:3000',
       'http://127.0.0.1:3000',
       'https://palm-cafe-api-r6rx.vercel.app',
