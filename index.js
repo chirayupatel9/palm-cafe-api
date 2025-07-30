@@ -57,7 +57,8 @@ app.use(cors({
       'http://127.0.0.1:3000',
       'https://palm-cafe-api-r6rx.vercel.app',
       'https://palm-cafe-ui.vercel.app',
-      'https://*.vercel.app'
+      'https://*.vercel.app',
+      'https://palmcafeapi.nevyaa.com'
     ];
     
     // Check if origin is in allowed list
