@@ -54,21 +54,10 @@ app.use(cors({
     const allowedOrigins = [
       // Development origins
       'https://palmcafe.nevyaa.com',
-      'https://palmcafeapi.nevyaa.com'
     ];
     
     // Check if origin is in allowed list
     if (allowedOrigins.indexOf(origin) !== -1) {
-      return callback(null, true);
-    }
-    
-    // Allow any Vercel subdomain
-    if (origin.includes('.vercel.app')) {
-      return callback(null, true);
-    }
-    
-    // Allow any HTTPS origin for development flexibility
-    if (origin.startsWith('https://')) {
       return callback(null, true);
     }
     
