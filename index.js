@@ -53,6 +53,7 @@ app.use(cors({
     
     const allowedOrigins = [
       // Development origins
+      'http://localhost:3000',
       'https://palmcafe.nevyaa.com',
     ];
     

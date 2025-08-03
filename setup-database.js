@@ -96,7 +96,7 @@ async function createDatabase() {
     `);
     console.log('✅ Menu items table created');
 
-    // Orders table
+    // Orders table with all required columns
     await connection.query(`
       CREATE TABLE IF NOT EXISTS orders (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -109,9 +109,15 @@ async function createDatabase() {
         tax_amount DECIMAL(10,2) DEFAULT 0,
         tip_amount DECIMAL(10,2) DEFAULT 0,
         points_redeemed INT DEFAULT 0,
+        points_awarded BOOLEAN DEFAULT FALSE,
         final_amount DECIMAL(10,2) NOT NULL,
         status ENUM('pending', 'preparing', 'ready', 'completed', 'cancelled') DEFAULT 'pending',
         payment_method ENUM('cash', 'card', 'upi', 'online') DEFAULT 'cash',
+        split_payment BOOLEAN DEFAULT FALSE,
+        split_payment_method VARCHAR(50) NULL,
+        split_amount DECIMAL(10,2) DEFAULT 0.00,
+        extra_charge DECIMAL(10,2) DEFAULT 0.00,
+        extra_charge_note VARCHAR(255) NULL,
         notes TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -176,7 +182,7 @@ async function createDatabase() {
     `);
     console.log('✅ Invoice items table created');
 
-    // Tax settings table
+    // Tax settings table with all required columns
     await connection.query(`
       CREATE TABLE IF NOT EXISTS tax_settings (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -263,6 +269,22 @@ async function createDatabase() {
     `);
     console.log('✅ Users table created');
 
+    // Payment methods table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS payment_methods (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        code VARCHAR(50) UNIQUE NOT NULL,
+        description TEXT,
+        icon VARCHAR(10),
+        display_order INT DEFAULT 0,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    console.log('✅ Payment methods table created');
+
     console.log('✅ All tables created successfully');
 
     // Insert initial data
@@ -272,7 +294,7 @@ async function createDatabase() {
     const [existingTax] = await connection.query('SELECT COUNT(*) as count FROM tax_settings');
     if (existingTax[0].count === 0) {
       await connection.query(`
-        INSERT INTO tax_settings (tax_name, tax_rate) VALUES ('Sales Tax', 8.50)
+        INSERT INTO tax_settings (tax_name, tax_rate, show_tax_in_menu, include_tax) VALUES ('Sales Tax', 8.50, TRUE, TRUE)
       `);
       await connection.query(`
         INSERT INTO tax_settings_history (tax_name, tax_rate, changed_by) VALUES ('Sales Tax', 8.50, 'system')
@@ -290,6 +312,25 @@ async function createDatabase() {
         INSERT INTO currency_settings_history (currency_code, currency_symbol, currency_name, changed_by) VALUES ('INR', '₹', 'Indian Rupee', 'system')
       `);
       console.log('✅ Default currency settings inserted');
+    }
+
+    // Insert default payment methods
+    const [existingPaymentMethods] = await connection.query('SELECT COUNT(*) as count FROM payment_methods');
+    if (existingPaymentMethods[0].count === 0) {
+      const defaultPaymentMethods = [
+        { name: 'Cash', code: 'cash', description: 'Pay with cash', icon: '💵', display_order: 1 },
+        { name: 'UPI', code: 'upi', description: 'Pay using UPI', icon: '📱', display_order: 2 },
+        { name: 'Card', code: 'card', description: 'Pay with credit/debit card', icon: '💳', display_order: 3 },
+        { name: 'Online', code: 'online', description: 'Pay online', icon: '🌐', display_order: 4 }
+      ];
+
+      for (const method of defaultPaymentMethods) {
+        await connection.query(`
+          INSERT INTO payment_methods (name, code, description, icon, display_order, is_active) 
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [method.name, method.code, method.description, method.icon, method.display_order, true]);
+      }
+      console.log('✅ Default payment methods inserted');
     }
 
     // Insert sample categories
@@ -358,8 +399,8 @@ async function createDatabase() {
     console.log('🎉 Database setup completed successfully!');
     console.log('\n📋 Summary:');
     console.log(`   Database: ${databaseName}`);
-    console.log(`   Tables created: 9`);
-    console.log(`   Sample data: Categories, Menu Items, Tax Settings, Currency Settings`);
+    console.log(`   Tables created: 11`);
+    console.log(`   Sample data: Categories, Menu Items, Tax Settings, Currency Settings, Payment Methods`);
     console.log('\n🚀 You can now start the application!');
 
   } catch (error) {
