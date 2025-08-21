@@ -25,6 +25,8 @@ class Order {
           o.split_payment,
           o.split_payment_method,
           o.split_amount,
+          o.extra_charge,
+          o.extra_charge_note,
           o.notes,
           o.created_at,
           o.updated_at,
@@ -112,6 +114,8 @@ class Order {
           o.split_payment,
           o.split_payment_method,
           o.split_amount,
+          o.extra_charge,
+          o.extra_charge_note,
           o.notes,
           o.created_at,
           o.updated_at,
@@ -282,6 +286,112 @@ class Order {
       return await this.getById(id);
     } catch (error) {
       throw new Error(`Error updating order status: ${error.message}`);
+    }
+  }
+
+  // Update order details
+  static async update(id, orderData) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const {
+        customer_name,
+        customer_email,
+        customer_phone,
+        items,
+        total_amount,
+        tax_amount,
+        tip_amount,
+        final_amount,
+        payment_method,
+        split_payment,
+        split_payment_method,
+        split_amount,
+        extra_charge,
+        extra_charge_note,
+        notes
+      } = orderData;
+
+      // Handle undefined values by converting them to null
+      const safeCustomerName = customer_name || null;
+      const safeCustomerEmail = customer_email || null;
+      const safeCustomerPhone = customer_phone || null;
+      const safeTotalAmount = total_amount || 0;
+      const safeTaxAmount = tax_amount || 0;
+      const safeTipAmount = tip_amount || 0;
+      const safeFinalAmount = final_amount || 0;
+      const safePaymentMethod = payment_method || null;
+      const safeSplitPayment = Boolean(split_payment);
+      const safeSplitPaymentMethod = split_payment_method || null;
+      const safeSplitAmount = split_amount || 0;
+      const safeExtraCharge = extra_charge || 0;
+      const safeExtraChargeNote = extra_charge_note || null;
+      const safeNotes = notes || null;
+
+      // Update order
+      const [orderResult] = await connection.execute(`
+        UPDATE orders SET
+          customer_name = ?,
+          customer_email = ?,
+          customer_phone = ?,
+          total_amount = ?,
+          tax_amount = ?,
+          tip_amount = ?,
+          final_amount = ?,
+          payment_method = ?,
+          split_payment = ?,
+          split_payment_method = ?,
+          split_amount = ?,
+          extra_charge = ?,
+          extra_charge_note = ?,
+          notes = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [
+        safeCustomerName, safeCustomerEmail, safeCustomerPhone,
+        safeTotalAmount, safeTaxAmount, safeTipAmount, safeFinalAmount,
+        safePaymentMethod, safeSplitPayment, safeSplitPaymentMethod, safeSplitAmount,
+        safeExtraCharge, safeExtraChargeNote, safeNotes, id
+      ]);
+
+      if (orderResult.affectedRows === 0) {
+        throw new Error('Order not found');
+      }
+
+      // If items are provided, update order items
+      if (items && Array.isArray(items)) {
+        // Delete existing order items
+        await connection.execute('DELETE FROM order_items WHERE order_id = ?', [id]);
+
+        // Create new order items
+        for (const item of items) {
+          const safeMenuItemId = item.menu_item_id || item.id || null;
+          const safeItemName = item.name || null;
+          const safeQuantity = item.quantity || 0;
+          const safeUnitPrice = item.price || 0;
+          const safeTotalPrice = item.total || 0;
+          
+          await connection.execute(`
+            INSERT INTO order_items (
+              order_id, menu_item_id, item_name, quantity, unit_price, total_price
+            ) VALUES (?, ?, ?, ?, ?, ?)
+          `, [
+            id, safeMenuItemId, safeItemName, safeQuantity, safeUnitPrice, safeTotalPrice
+          ]);
+        }
+      }
+
+      await connection.commit();
+      
+      const result = await this.getById(id);
+      return result;
+    } catch (error) {
+      console.error('Error updating order:', error);
+      await connection.rollback();
+      throw new Error(`Error updating order: ${error.message}`);
+    } finally {
+      connection.release();
     }
   }
 

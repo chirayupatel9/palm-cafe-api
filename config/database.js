@@ -6,7 +6,7 @@ const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'palm_cafe',
+  database: process.env.DB_NAME || 'cafe_app',
   port: process.env.DB_PORT || 3306,
   waitForConnections: true,
   connectionLimit: 10,
@@ -134,7 +134,7 @@ const initializeDatabase = async () => {
       
       await connection.execute(
         'INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)',
-        ['admin', 'admin@palmcafe.com', hashedPassword, 'admin']
+        ['admin', 'admin@cafe.com', hashedPassword, 'admin']
       );
       console.log('Default admin user created (username: admin, password: admin123)');
     }

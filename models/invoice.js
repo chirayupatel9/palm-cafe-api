@@ -181,7 +181,7 @@ class Invoice {
       const { invoiceNumber, order_id, customerName, customerPhone, paymentMethod, items, subtotal, taxAmount, tipAmount, total, date } = invoiceData;
 
       // Convert ISO datetime to MySQL datetime format
-      const mysqlDate = new Date(date).toISOString().slice(0, 19).replace('T', ' ');
+      const mysqlDate = new Date(date || new Date()).toISOString().slice(0, 19).replace('T', ' ');
 
       // Insert invoice
       await connection.execute(`
@@ -209,7 +209,7 @@ class Invoice {
         tax_amount: parseFloat(taxAmount),
         tip_amount: parseFloat(tipAmount),
         total_amount: parseFloat(total),
-        invoice_date: date
+        invoice_date: date || new Date().toISOString()
       };
     } catch (error) {
       await connection.rollback();

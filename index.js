@@ -14,6 +14,7 @@ const Category = require('./models/category');
 const Invoice = require('./models/invoice');
 const TaxSettings = require('./models/taxSettings');
 const CurrencySettings = require('./models/currencySettings');
+const CafeSettings = require('./models/cafeSettings');
 const User = require('./models/user');
 const Inventory = require('./models/inventory');
 const Order = require('./models/order');
@@ -27,7 +28,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0'; // Allow network access
 
-// Configure multer for file uploads
+// Configure multer for Excel file uploads
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -45,16 +46,35 @@ const upload = multer({
   }
 });
 
+// Configure multer for image uploads
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  }
+});
+
 // Middleware
 app.use(cors({
-  origin: function (origin, callback) {
+  origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
     const allowedOrigins = [
-      // Development origins
+      // Production origins
+      'https://app.cafe.nevyaa.com',
+      // Development origins (from environment variables)
+      process.env.FRONTEND_URL, 
       'http://localhost:3000',
-      'https://palmcafe.nevyaa.com',
+      
+
     ];
     
     // Check if origin is in allowed list
@@ -94,6 +114,9 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
+// Serve static files from public directory
+app.use('/images', express.static(path.join(__dirname, 'public', 'images')));
+
 // Generate PDF invoice
 const generatePDF = async (invoice) => {
   // Get current currency settings with better error handling
@@ -111,6 +134,20 @@ const generatePDF = async (invoice) => {
     } catch (error) {
     console.error('Error fetching currency settings for PDF:', error);
     }
+
+  // Get cafe settings for dynamic content
+  let cafeSettings = {
+    cafe_name: 'Our Cafe',
+    logo_url: '/images/palm-cafe-logo.png'
+  };
+  try {
+    const settings = await CafeSettings.getCurrent();
+    if (settings) {
+      cafeSettings = settings;
+    }
+  } catch (error) {
+    console.error('Error fetching cafe settings for PDF:', error);
+  }
 
   // Helper function to format currency with symbol
   const formatCurrency = (amount) => {
@@ -160,7 +197,10 @@ const generatePDF = async (invoice) => {
     
     // Logo in header - left side, bigger
     try {
-      doc.image('./public/images/palm-cafe-logo.png', margin, 10, { width: 50, height: 50 }); // Much larger logo on left
+      const logoPath = cafeSettings.logo_url.startsWith('/') ? 
+        `./public${cafeSettings.logo_url}` : 
+        `./public/images/${cafeSettings.logo_url}`;
+      doc.image(logoPath, margin, 10, { width: 50, height: 50 }); // Much larger logo on left
     } catch (error) {
       console.error('Error adding logo to PDF:', error);
       // Fallback to drawn logo
@@ -171,7 +211,7 @@ const generatePDF = async (invoice) => {
     }
 
     // Business name - right side
-    doc.fontSize(20).font('Helvetica-Bold').fill('#153059').text('PALM CAFE', margin + 380, 25, { width: 200 }); // Bold font on right side
+    doc.fontSize(20).font('Helvetica-Bold').fill('#153059').text(cafeSettings.cafe_name.toUpperCase(), margin + 380, 25, { width: 200 }); // Bold font on right side
     
     // Invoice title
     doc.fontSize(14).font('Helvetica-Bold').fill('#75826b').text('INVOICE', 0, 85, { align: 'center', width: pageWidth }); // Larger font
@@ -186,11 +226,11 @@ const generatePDF = async (invoice) => {
     if (invoice.order_number) {
       doc.fontSize(9).font('Helvetica-Bold').fill('#153059').text('Order #:', margin, currentY + 15);
       doc.fontSize(9).font('Helvetica').text(invoice.order_number, margin + 70, currentY + 15);
-      doc.fontSize(9).font('Helvetica').text(`Date: ${new Date(invoice.date).toLocaleDateString()}`, margin, currentY + 25);
-      doc.fontSize(9).font('Helvetica').text(`Time: ${new Date(invoice.date).toLocaleTimeString()}`, margin, currentY + 35);
+      doc.fontSize(9).font('Helvetica').text(`Date: ${new Date(invoice.invoice_date).toLocaleDateString()}`, margin, currentY + 25);
+      doc.fontSize(9).font('Helvetica').text(`Time: ${new Date(invoice.invoice_date).toLocaleTimeString()}`, margin, currentY + 35);
     } else {
-      doc.fontSize(9).font('Helvetica').text(`Date: ${new Date(invoice.date).toLocaleDateString()}`, margin, currentY + 15);
-      doc.fontSize(9).font('Helvetica').text(`Time: ${new Date(invoice.date).toLocaleTimeString()}`, margin, currentY + 25);
+      doc.fontSize(9).font('Helvetica').text(`Date: ${new Date(invoice.invoice_date).toLocaleDateString()}`, margin, currentY + 15);
+      doc.fontSize(9).font('Helvetica').text(`Time: ${new Date(invoice.invoice_date).toLocaleTimeString()}`, margin, currentY + 25);
     }
     
     // Right column - Customer details
@@ -266,7 +306,7 @@ const generatePDF = async (invoice) => {
     // doc.roundedRect(margin + 280, currentY, 180, 20, 5).fill('#75826b'); // Larger height
     doc.fontSize(12).font('Helvetica-Bold').fill('#ffffff'); // Larger font
     doc.text('Total:', margin + 290, currentY + 5, { width: 80, align: 'right' }); // Better Y position
-    doc.text(formatCurrency(invoice.total), margin + 380, currentY + 5, { width: 80, align: 'right' }); // Better Y position
+    doc.text(formatCurrency(invoice.total_amount), margin + 380, currentY + 5, { width: 80, align: 'right' }); // Better Y position
 
     // Payment Method
     currentY += 25; // Add space after total
@@ -290,13 +330,16 @@ const generatePDF = async (invoice) => {
     doc.rect(0, footerY, pageWidth, 60).fill('#153059');
     
     try {
-      doc.image('./public/images/palm-cafe-logo.png', margin, footerY + 5, { width: 15, height: 15 }); // Larger logo
+      const logoPath = cafeSettings.logo_url.startsWith('/') ? 
+        `./public${cafeSettings.logo_url}` : 
+        `./public/images/${cafeSettings.logo_url}`;
+      doc.image(logoPath, margin, footerY + 5, { width: 15, height: 15 }); // Larger logo
     } catch (error) {
       // Fallback logo in footer
       doc.circle(margin + 7, footerY + 12, 7).fill('#f4e1ba'); // Larger circle
     }
     
-    doc.fontSize(9).font('Helvetica-Bold').fill('#ffffff').text('Thank you for visiting Palm Cafe!', 0, footerY + 20, { align: 'center', width: pageWidth }); // Better positioned and larger font
+    doc.fontSize(9).font('Helvetica-Bold').fill('#ffffff').text(`Thank you for visiting ${cafeSettings.cafe_name}!`, 0, footerY + 20, { align: 'center', width: pageWidth }); // Better positioned and larger font
     // doc.fontSize(5).font('Helvetica').fill('#f4e1ba').text('Generated by Palm Cafe Management System', 0, footerY + 20, { align: 'center', width: pageWidth }); // Smaller font
 
     doc.end();
@@ -418,6 +461,77 @@ app.post('/api/auth/register-chef', chefAuth, async (req, res) => {
   }
 });
 
+// Register new reception (requires existing admin authentication)
+app.post('/api/auth/register-reception', chefAuth, async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+
+    // Validate input
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findByEmail(email);
+    if (existingUser) {
+      return res.status(400).json({ error: 'User with this email already exists' });
+    }
+
+    // Create new reception user
+    const user = await User.create({ username, email, password, role: 'reception' });
+
+    res.status(201).json({
+      message: 'Reception registered successfully',
+      user: { id: user.id, username: user.username, email: user.email, role: user.role }
+    });
+  } catch (error) {
+    console.error('Reception registration error:', error);
+    res.status(500).json({ error: 'Failed to register reception' });
+  }
+});
+
+// Register new superadmin (requires existing superadmin authentication)
+app.post('/api/auth/register-superadmin', auth, async (req, res) => {
+  try {
+    // Check if the authenticated user is a superadmin
+    if (req.user.role !== 'superadmin') {
+      return res.status(403).json({ error: 'Only superadmins can register new superadmins' });
+    }
+
+    const { username, email, password } = req.body;
+
+    // Validate input
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findByEmail(email);
+    if (existingUser) {
+      return res.status(400).json({ error: 'User with this email already exists' });
+    }
+
+    // Create new superadmin user
+    const user = await User.create({ username, email, password, role: 'superadmin' });
+
+    res.status(201).json({
+      message: 'Superadmin registered successfully',
+      user: { id: user.id, username: user.username, email: user.email, role: user.role }
+    });
+  } catch (error) {
+    console.error('Superadmin registration error:', error);
+    res.status(500).json({ error: 'Failed to register superadmin' });
+  }
+});
+
 // Login user
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
@@ -505,10 +619,8 @@ app.get('/api/cors-test', (req, res) => {
     method: req.method,
     timestamp: new Date().toISOString(),
     allowedOrigins: [
-      'http://localhost:3000',
-      'http://127.0.0.1:3000',
-      'http://localhost:3001',
-      'http://127.0.0.1:3001',
+      process.env.FRONTEND_URL || 'http://localhost:3000',
+      process.env.ADMIN_URL || 'http://localhost:3001',
       'https://palm-cafe-api-r6rx.vercel.app',
       'https://palm-cafe-ui.vercel.app',
       'https://palm-cafe.vercel.app',
@@ -657,7 +769,7 @@ app.get('/api/menu/grouped', async (req, res) => {
 // Add new menu item
 app.post('/api/menu', async (req, res) => {
   try {
-    const { category_id, name, description, price, sort_order } = req.body;
+    const { category_id, name, description, price, sort_order, image_url } = req.body;
     
     if (!category_id || !name || !price) {
       return res.status(400).json({ error: 'Category, name and price are required' });
@@ -668,7 +780,8 @@ app.post('/api/menu', async (req, res) => {
       name: name.trim(),
       description: description ? description.trim() : '',
       price: parseFloat(price),
-      sort_order: sort_order || 0
+      sort_order: sort_order || 0,
+      image_url: image_url || null
     };
 
     const createdItem = await MenuItem.create(newItem);
@@ -683,7 +796,7 @@ app.post('/api/menu', async (req, res) => {
 app.put('/api/menu/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { category_id, name, description, price, sort_order, is_active } = req.body;
+    const { category_id, name, description, price, sort_order, is_active, image_url } = req.body;
     
     if (!category_id || !name || !price) {
       return res.status(400).json({ error: 'Category, name and price are required' });
@@ -695,7 +808,8 @@ app.put('/api/menu/:id', async (req, res) => {
       description: description ? description.trim() : '',
       price: parseFloat(price),
       sort_order: sort_order || 0,
-      is_available: is_active !== undefined ? is_active : true
+      is_available: is_active !== undefined ? is_active : true,
+      image_url: image_url || null
     });
 
     res.json(updatedItem);
@@ -997,6 +1111,229 @@ app.get('/api/currency-settings/available', async (req, res) => {
   }
 });
 
+// Get current cafe settings
+app.get('/api/cafe-settings', async (req, res) => {
+  try {
+    const cafeSettings = await CafeSettings.getCurrent();
+    res.json(cafeSettings);
+  } catch (error) {
+    console.error('Error fetching cafe settings:', error);
+    res.status(500).json({ error: 'Failed to fetch cafe settings' });
+  }
+});
+
+// Update cafe settings
+app.put('/api/cafe-settings', auth, async (req, res) => {
+  try {
+    console.log('Received cafe settings update request:', JSON.stringify(req.body, null, 2));
+    const { 
+      cafe_name, logo_url, address, phone, email, website, opening_hours, description,
+      show_kitchen_tab, show_customers_tab, show_payment_methods_tab, show_menu_tab, show_inventory_tab, show_history_tab, show_menu_images,
+      chef_show_kitchen_tab, chef_show_menu_tab, chef_show_inventory_tab, chef_show_history_tab,
+      chef_can_edit_orders, chef_can_view_customers, chef_can_view_payments,
+      reception_show_kitchen_tab, reception_show_menu_tab, reception_show_inventory_tab, reception_show_history_tab,
+      reception_can_edit_orders, reception_can_view_customers, reception_can_view_payments, reception_can_create_orders,
+      admin_can_access_settings, admin_can_manage_users, admin_can_view_reports, admin_can_manage_inventory, admin_can_manage_menu,
+      enable_thermal_printer, default_printer_type, printer_name, printer_port, printer_baud_rate, auto_print_new_orders, print_order_copies,
+      light_primary_color, light_secondary_color, light_accent_color, light_background_color, light_text_color, light_surface_color,
+      dark_primary_color, dark_secondary_color, dark_accent_color, dark_background_color, dark_text_color, dark_surface_color,
+      color_scheme, primary_color, secondary_color, accent_color
+    } = req.body;
+    
+    if (!cafe_name) {
+      return res.status(400).json({ error: 'Cafe name is required' });
+    }
+
+    // Validate that all required fields are present
+    const requiredFields = ['cafe_name'];
+    const missingFields = requiredFields.filter(field => !req.body[field]);
+    
+    if (missingFields.length > 0) {
+      return res.status(400).json({ 
+        error: 'Missing required fields', 
+        missingFields 
+      });
+    }
+
+    // Test database connection before proceeding
+    try {
+      const testConnection = await pool.getConnection();
+      testConnection.release();
+      console.log('Database connection test successful');
+    } catch (dbError) {
+      console.error('Database connection test failed:', dbError);
+      return res.status(500).json({ 
+        error: 'Database connection failed',
+        details: dbError.message 
+      });
+    }
+
+    const updatedSettings = await CafeSettings.update({
+      cafe_name: cafe_name.trim(),
+      logo_url: logo_url || '/images/palm-cafe-logo.png',
+      address: address || '',
+      phone: phone || '',
+      email: email || '',
+      website: website || '',
+      opening_hours: opening_hours || '',
+      description: description || '',
+      show_kitchen_tab: show_kitchen_tab !== undefined ? show_kitchen_tab : true,
+      show_customers_tab: show_customers_tab !== undefined ? show_customers_tab : true,
+      show_payment_methods_tab: show_payment_methods_tab !== undefined ? show_payment_methods_tab : true,
+      show_menu_tab: show_menu_tab !== undefined ? show_menu_tab : true,
+      show_inventory_tab: show_inventory_tab !== undefined ? show_inventory_tab : true,
+      show_history_tab: show_history_tab !== undefined ? show_history_tab : true,
+      show_menu_images: show_menu_images !== undefined ? show_menu_images : true,
+      chef_show_kitchen_tab: chef_show_kitchen_tab !== undefined ? chef_show_kitchen_tab : true,
+      chef_show_menu_tab: chef_show_menu_tab !== undefined ? chef_show_menu_tab : false,
+      chef_show_inventory_tab: chef_show_inventory_tab !== undefined ? chef_show_inventory_tab : false,
+      chef_show_history_tab: chef_show_history_tab !== undefined ? chef_show_history_tab : true,
+      chef_can_edit_orders: chef_can_edit_orders !== undefined ? chef_can_edit_orders : true,
+      chef_can_view_customers: chef_can_view_customers !== undefined ? chef_can_view_customers : false,
+      chef_can_view_payments: chef_can_view_payments !== undefined ? chef_can_view_payments : false,
+      reception_show_kitchen_tab: reception_show_kitchen_tab !== undefined ? reception_show_kitchen_tab : true,
+      reception_show_menu_tab: reception_show_menu_tab !== undefined ? reception_show_menu_tab : false,
+      reception_show_inventory_tab: reception_show_inventory_tab !== undefined ? reception_show_inventory_tab : false,
+      reception_show_history_tab: reception_show_history_tab !== undefined ? reception_show_history_tab : true,
+      reception_can_edit_orders: reception_can_edit_orders !== undefined ? reception_can_edit_orders : true,
+      reception_can_view_customers: reception_can_view_customers !== undefined ? reception_can_view_customers : true,
+      reception_can_view_payments: reception_can_view_payments !== undefined ? reception_can_view_payments : true,
+      reception_can_create_orders: reception_can_create_orders !== undefined ? reception_can_create_orders : true,
+      admin_can_access_settings: admin_can_access_settings !== undefined ? admin_can_access_settings : false,
+      admin_can_manage_users: admin_can_manage_users !== undefined ? admin_can_manage_users : false,
+      admin_can_view_reports: admin_can_view_reports !== undefined ? admin_can_view_reports : true,
+      admin_can_manage_inventory: admin_can_manage_inventory !== undefined ? admin_can_manage_inventory : true,
+      admin_can_manage_menu: admin_can_manage_menu !== undefined ? admin_can_manage_menu : true,
+      enable_thermal_printer: enable_thermal_printer !== undefined ? enable_thermal_printer : false,
+      default_printer_type: default_printer_type || 'system',
+      printer_name: printer_name || null,
+      printer_port: printer_port || null,
+      printer_baud_rate: printer_baud_rate || 9600,
+      auto_print_new_orders: auto_print_new_orders !== undefined ? auto_print_new_orders : false,
+      print_order_copies: print_order_copies || 1,
+      color_scheme: color_scheme || 'default',
+      primary_color: primary_color || '#75826b',
+      secondary_color: secondary_color || '#153059',
+      accent_color: accent_color || '#e0a066',
+      light_primary_color: light_primary_color || '#3B82F6',
+      light_secondary_color: light_secondary_color || '#6B7280',
+      light_accent_color: light_accent_color || '#10B981',
+      light_background_color: light_background_color || '#FFFFFF',
+      light_text_color: light_text_color || '#1F2937',
+      light_surface_color: light_surface_color || '#F9FAFB',
+      dark_primary_color: dark_primary_color || '#60A5FA',
+      dark_secondary_color: dark_secondary_color || '#9CA3AF',
+      dark_accent_color: dark_accent_color || '#34D399',
+      dark_background_color: dark_background_color || '#111827',
+      dark_text_color: dark_text_color || '#F9FAFB',
+      dark_surface_color: dark_surface_color || '#1F2937',
+      changed_by: req.user.username
+    });
+
+    res.json(updatedSettings);
+  } catch (error) {
+    console.error('Error updating cafe settings:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Failed to update cafe settings',
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// Get cafe settings history
+app.get('/api/cafe-settings/history', auth, async (req, res) => {
+  try {
+    const history = await CafeSettings.getHistory();
+    res.json(history);
+  } catch (error) {
+    console.error('Error fetching cafe settings history:', error);
+    res.status(500).json({ error: 'Failed to fetch cafe settings history' });
+  }
+});
+
+// Upload cafe logo
+app.post('/api/cafe-settings/logo', auth, imageUpload.single('logo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No logo file uploaded' });
+    }
+
+    // Validate file type
+    if (!req.file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: 'Only image files are allowed' });
+    }
+
+    // Generate unique filename
+    const fileExtension = path.extname(req.file.originalname);
+    const fileName = `cafe-logo-${Date.now()}${fileExtension}`;
+    const filePath = path.join(__dirname, 'public', 'images', fileName);
+
+    // Ensure directory exists
+    const uploadDir = path.dirname(filePath);
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // Save file
+    fs.writeFileSync(filePath, req.file.buffer);
+
+    // Update cafe settings with new logo URL
+    const logoUrl = `/images/${fileName}`;
+    const updatedSettings = await CafeSettings.updateLogo(logoUrl);
+
+    res.json({ 
+      success: true, 
+      logo_url: logoUrl,
+      message: 'Logo uploaded successfully' 
+    });
+  } catch (error) {
+    console.error('Error uploading logo:', error);
+    res.status(500).json({ error: 'Failed to upload logo' });
+  }
+});
+
+// Upload menu item image
+app.post('/api/menu/upload-image', auth, imageUpload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file uploaded' });
+    }
+
+    // Validate file type
+    if (!req.file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: 'Only image files are allowed' });
+    }
+
+    // Generate unique filename
+    const fileExtension = path.extname(req.file.originalname);
+    const fileName = `menu-item-${Date.now()}${fileExtension}`;
+    const filePath = path.join(__dirname, 'public', 'images', fileName);
+
+    // Ensure directory exists
+    const uploadDir = path.dirname(filePath);
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // Save file
+    fs.writeFileSync(filePath, req.file.buffer);
+
+    // Return the image URL
+    const imageUrl = `/images/${fileName}`;
+
+    res.json({ 
+      success: true, 
+      image_url: imageUrl,
+      message: 'Image uploaded successfully' 
+    });
+  } catch (error) {
+    console.error('Error uploading menu item image:', error);
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
+
 // Get all invoices
 app.get('/api/invoices', async (req, res) => {
   try {
@@ -1121,7 +1458,7 @@ app.post('/api/invoices', auth, async (req, res) => {
       taxAmount: taxCalculation.taxAmount,
       tipAmount: tipAmountNum,
       total,
-      date
+      date: date || new Date().toISOString()
     };
 
     const createdInvoice = await Invoice.create(invoiceData);
@@ -1495,7 +1832,20 @@ app.get('/api/inventory/:id', auth, async (req, res) => {
 });
 
 // Generate thermal printer content
-const generateThermalPrintContent = (order) => {
+const generateThermalPrintContent = async (order) => {
+  // Get cafe settings for dynamic content
+  let cafeSettings = {
+    cafe_name: 'Our Cafe'
+  };
+  try {
+    const settings = await CafeSettings.getCurrent();
+    if (settings) {
+      cafeSettings = settings;
+    }
+  } catch (error) {
+    console.error('Error fetching cafe settings for thermal print:', error);
+  }
+
   const formatCurrency = (amount) => {
     return `₹${parseFloat(amount || 0).toFixed(2)}`;
   };
@@ -1520,7 +1870,7 @@ const generateThermalPrintContent = (order) => {
   
   // Header
   content += '='.repeat(32) + '\n';
-  content += '        PALM CAFE\n';
+  content += `        ${cafeSettings.cafe_name.toUpperCase()}\n`;
   content += '='.repeat(32) + '\n';
   content += `Order #: ${order.order_number}\n`;
   content += `Date: ${formatDate(order.created_at)}\n`;
@@ -1770,6 +2120,24 @@ app.patch('/api/orders/:id/status', auth, async (req, res) => {
   }
 });
 
+// Update order details
+app.put('/api/orders/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const orderData = req.body;
+    
+    if (!orderData) {
+      return res.status(400).json({ error: 'Order data is required' });
+    }
+
+    const updatedOrder = await Order.update(id, orderData);
+    res.json(updatedOrder);
+  } catch (error) {
+    console.error('Error updating order:', error);
+    res.status(500).json({ error: 'Failed to update order' });
+  }
+});
+
 // Create new order
 app.post('/api/orders', auth, async (req, res) => {
   try {
@@ -1848,7 +2216,7 @@ app.post('/api/orders/:id/print', auth, async (req, res) => {
     }
 
     // Generate thermal printer formatted text
-    const printContent = generateThermalPrintContent(order);
+    const printContent = await generateThermalPrintContent(order);
     
     res.setHeader('Content-Type', 'text/plain');
     res.setHeader('Content-Disposition', `attachment; filename="order-${order.order_number}.txt"`);
@@ -2223,9 +2591,9 @@ const startServer = async () => {
 
     // Start server
     app.listen(PORT, HOST, () => {
-      logger.info(`Palm Cafe server running on ${HOST}:${PORT}`);
+      logger.info(`Cafe Management server running on ${HOST}:${PORT}`);
       logger.info(`API available at http://${HOST}:${PORT}/api`);
-      logger.info(`Local access: http://localhost:${PORT}/api`);
+      logger.info(`Local access: http://${HOST}:${PORT}/api`);
       logger.info('Database connected and initialized successfully');
     });
   } catch (error) {

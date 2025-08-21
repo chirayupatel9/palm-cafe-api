@@ -13,6 +13,7 @@ class MenuItem {
           m.price,
           m.is_available,
           m.sort_order,
+          m.image_url,
           m.created_at,
           m.updated_at,
           c.name as category_name
@@ -45,7 +46,8 @@ class MenuItem {
           m.name,
           m.description,
           m.price,
-          m.sort_order
+          m.sort_order,
+          m.image_url
         FROM categories c
         LEFT JOIN menu_items m ON c.id = m.category_id AND m.is_available = TRUE
         WHERE c.is_active = TRUE
@@ -70,7 +72,8 @@ class MenuItem {
             name: row.name,
             description: row.description,
             price: parseFloat(row.price),
-            sort_order: parseInt(row.sort_order)
+            sort_order: parseInt(row.sort_order),
+            image_url: row.image_url
           });
         }
       });
@@ -93,6 +96,7 @@ class MenuItem {
           m.price,
           m.is_available,
           m.sort_order,
+          m.image_url,
           m.created_at,
           m.updated_at,
           c.name as category_name
@@ -118,15 +122,15 @@ class MenuItem {
   // Create new menu item
   static async create(menuItemData) {
     try {
-      const { category_id, name, description, price, sort_order } = menuItemData;
+      const { category_id, name, description, price, sort_order, image_url } = menuItemData;
       
       if (!category_id) {
         throw new Error('Category ID is required');
       }
       
       const [result] = await pool.execute(
-        'INSERT INTO menu_items (category_id, name, description, price, sort_order) VALUES (?, ?, ?, ?, ?)',
-        [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0]
+        'INSERT INTO menu_items (category_id, name, description, price, sort_order, image_url) VALUES (?, ?, ?, ?, ?, ?)',
+        [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0, image_url || null]
       );
       
       return await this.getById(result.insertId);
@@ -138,7 +142,7 @@ class MenuItem {
   // Update menu item
   static async update(id, menuItemData) {
     try {
-      const { category_id, name, description, price, sort_order, is_available } = menuItemData;
+      const { category_id, name, description, price, sort_order, is_available, image_url } = menuItemData;
       
       if (!category_id) {
         throw new Error('Category ID is required');
@@ -151,10 +155,11 @@ class MenuItem {
       const safePrice = price ? parseFloat(price) : 0;
       const safeSortOrder = sort_order || 0;
       const safeIsAvailable = is_available !== undefined ? is_available : true;
+      const safeImageUrl = image_url || null;
       
       const [result] = await pool.execute(
-        'UPDATE menu_items SET category_id = ?, name = ?, description = ?, price = ?, sort_order = ?, is_available = ? WHERE id = ?',
-        [safeCategoryId, safeName, safeDescription, safePrice, safeSortOrder, safeIsAvailable, id]
+        'UPDATE menu_items SET category_id = ?, name = ?, description = ?, price = ?, sort_order = ?, is_available = ?, image_url = ? WHERE id = ?',
+        [safeCategoryId, safeName, safeDescription, safePrice, safeSortOrder, safeIsAvailable, safeImageUrl, id]
       );
       
       if (result.affectedRows === 0) {
@@ -167,19 +172,16 @@ class MenuItem {
     }
   }
 
-  // Delete menu item (soft delete)
+  // Delete menu item
   static async delete(id) {
     try {
-      const [result] = await pool.execute(
-        'UPDATE menu_items SET is_available = FALSE WHERE id = ?',
-        [id]
-      );
+      const [result] = await pool.execute('DELETE FROM menu_items WHERE id = ?', [id]);
       
       if (result.affectedRows === 0) {
         throw new Error('Menu item not found');
       }
       
-      return true;
+      return { success: true };
     } catch (error) {
       throw new Error(`Error deleting menu item: ${error.message}`);
     }
@@ -197,6 +199,7 @@ class MenuItem {
           m.price,
           m.is_available,
           m.sort_order,
+          m.image_url,
           m.created_at,
           m.updated_at,
           c.name as category_name
@@ -225,15 +228,15 @@ class MenuItem {
       const results = [];
       for (const item of items) {
         try {
-          const { category_id, name, description, price, sort_order } = item;
+          const { category_id, name, description, price, sort_order, image_url } = item;
           
           if (!category_id) {
             throw new Error('Category ID is required');
           }
           
           const [result] = await connection.execute(
-            'INSERT INTO menu_items (category_id, name, description, price, sort_order) VALUES (?, ?, ?, ?, ?)',
-            [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0]
+            'INSERT INTO menu_items (category_id, name, description, price, sort_order, image_url) VALUES (?, ?, ?, ?, ?, ?)',
+            [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0, image_url || null]
           );
           
           results.push({ success: true, item: { ...item, insertId: result.insertId } });

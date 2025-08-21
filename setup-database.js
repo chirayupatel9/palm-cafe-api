@@ -11,8 +11,8 @@ const dbConfig = {
   port: process.env.DB_PORT || 3306,
   multipleStatements: true
 };
-
-const databaseName = process.env.DB_NAME || 'palm_cafe';
+console.log(dbConfig);
+const databaseName = process.env.DB_NAME || 'cafe_app';
 
 async function createDatabase() {
   let connection;
@@ -236,6 +236,55 @@ async function createDatabase() {
     `);
     console.log('✅ Currency settings history table created');
 
+    // Cafe settings table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS cafe_settings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        cafe_name VARCHAR(200) NOT NULL DEFAULT 'Our Cafe',
+        logo_url VARCHAR(500) DEFAULT '/images/palm-cafe-logo.png',
+        address TEXT,
+        phone VARCHAR(50),
+        email VARCHAR(200),
+        website VARCHAR(200),
+        opening_hours TEXT,
+        description TEXT,
+        show_kitchen_tab BOOLEAN DEFAULT TRUE,
+        show_customers_tab BOOLEAN DEFAULT TRUE,
+        show_payment_methods_tab BOOLEAN DEFAULT TRUE,
+        show_menu_tab BOOLEAN DEFAULT TRUE,
+        show_inventory_tab BOOLEAN DEFAULT TRUE,
+        show_history_tab BOOLEAN DEFAULT TRUE,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    console.log('✅ Cafe settings table created');
+
+    // Cafe settings history table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS cafe_settings_history (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        cafe_name VARCHAR(200) NOT NULL,
+        logo_url VARCHAR(500),
+        address TEXT,
+        phone VARCHAR(50),
+        email VARCHAR(200),
+        website VARCHAR(200),
+        opening_hours TEXT,
+        description TEXT,
+        show_kitchen_tab BOOLEAN DEFAULT TRUE,
+        show_customers_tab BOOLEAN DEFAULT TRUE,
+        show_payment_methods_tab BOOLEAN DEFAULT TRUE,
+        show_menu_tab BOOLEAN DEFAULT TRUE,
+        show_inventory_tab BOOLEAN DEFAULT TRUE,
+        show_history_tab BOOLEAN DEFAULT TRUE,
+        changed_by VARCHAR(100) DEFAULT 'admin',
+        changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    console.log('✅ Cafe settings history table created');
+
     // Inventory table
     await connection.query(`
       CREATE TABLE IF NOT EXISTS inventory (
@@ -314,6 +363,20 @@ async function createDatabase() {
       console.log('✅ Default currency settings inserted');
     }
 
+    // Insert default cafe settings
+    const [existingCafeSettings] = await connection.query('SELECT COUNT(*) as count FROM cafe_settings');
+    if (existingCafeSettings[0].count === 0) {
+      await connection.query(`
+        INSERT INTO cafe_settings (cafe_name, logo_url, address, phone, email, website, opening_hours, description, show_kitchen_tab, show_customers_tab, show_payment_methods_tab, show_menu_tab, show_inventory_tab, show_history_tab) 
+        VALUES ('Our Cafe', '/images/palm-cafe-logo.png', '123 Main Street, City', '+91 98765 43210', 'info@ourcafe.com', 'https://ourcafe.com', 'Mon-Sun: 8:00 AM - 10:00 PM', 'Welcome to Our Cafe - Your perfect dining destination', TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
+      `);
+      await connection.query(`
+        INSERT INTO cafe_settings_history (cafe_name, logo_url, address, phone, email, website, opening_hours, description, show_kitchen_tab, show_customers_tab, show_payment_methods_tab, show_menu_tab, show_inventory_tab, show_history_tab, changed_by) 
+        VALUES ('Our Cafe', '/images/palm-cafe-logo.png', '123 Main Street, City', '+91 98765 43210', 'info@ourcafe.com', 'https://ourcafe.com', 'Mon-Sun: 8:00 AM - 10:00 PM', 'Welcome to Our Cafe - Your perfect dining destination', TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, 'system')
+      `);
+      console.log('✅ Default cafe settings inserted');
+    }
+
     // Insert default payment methods
     const [existingPaymentMethods] = await connection.query('SELECT COUNT(*) as count FROM payment_methods');
     if (existingPaymentMethods[0].count === 0) {
@@ -359,7 +422,7 @@ async function createDatabase() {
       const hashedPassword = await bcrypt.hash('admin123', 10);
       
       await connection.query(`
-        INSERT INTO users (username, email, password, role) VALUES ('admin', 'admin@palmcafe.com', ?, 'admin')
+        INSERT INTO users (username, email, password, role) VALUES ('admin', 'admin@cafe.com', ?, 'admin')
       `, [hashedPassword]);
       console.log('✅ Default admin user created (username: admin, password: admin123)');
     }

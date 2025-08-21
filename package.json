@@ -1,7 +1,7 @@
 {
-  "name": "palm-cafe-server",
+  "name": "cafe-management-server",
   "version": "1.0.0",
-  "description": "Backend API for Palm Cafe",
+  "description": "Backend API for Cafe Management System",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

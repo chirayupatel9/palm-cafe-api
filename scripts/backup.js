@@ -12,7 +12,7 @@ class DatabaseBackup {
       host: process.env.DB_HOST || 'localhost',
       user: process.env.DB_USER || 'root',
       password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_NAME || 'palm_cafe',
+      database: process.env.DB_NAME || 'cafe_app',
       port: process.env.DB_PORT || 3306
     };
   }
@@ -31,7 +31,7 @@ class DatabaseBackup {
   // Generate backup filename with timestamp
   generateBackupFilename() {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    return `palm_cafe_backup_${timestamp}.sql`;
+    return `cafe_app_backup_${timestamp}.sql`;
   }
 
   // Create database backup
