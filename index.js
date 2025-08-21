@@ -1348,7 +1348,7 @@ app.get('/api/invoices', async (req, res) => {
 // Create new invoice
 app.post('/api/invoices', auth, async (req, res) => {
   try {
-    const { customerName, customerPhone, customerEmail, paymentMethod, items, tipAmount, pointsRedeemed, date, splitPayment, splitPaymentMethod, splitAmount, extraCharge, extraChargeNote } = req.body;
+    const { customerName, customerPhone, customerEmail, tableNumber, paymentMethod, items, tipAmount, pointsRedeemed, date, splitPayment, splitPaymentMethod, splitAmount, extraCharge, extraChargeNote } = req.body;
     
     if (!customerName || !items || items.length === 0) {
       return res.status(400).json({ error: 'Customer name and items are required' });
@@ -1411,6 +1411,7 @@ app.post('/api/invoices', auth, async (req, res) => {
       customer_name: customerName,
       customer_email: customerEmail || null,
       customer_phone: customerPhone,
+      table_number: tableNumber || null,
       items: items.map(item => ({
         menu_item_id: item.id,
         name: item.name,
@@ -1967,7 +1968,7 @@ app.get('/api/customer/orders', async (req, res) => {
 // Create customer order (public endpoint)
 app.post('/api/customer/orders', async (req, res) => {
   try {
-    const { customerName, customerPhone, customerEmail, paymentMethod, items, tipAmount, pointsRedeemed, date, pickupOption } = req.body;
+    const { customerName, customerPhone, customerEmail, tableNumber, paymentMethod, items, tipAmount, pointsRedeemed, date, pickupOption } = req.body;
     
     if (!customerName || !items || items.length === 0) {
       return res.status(400).json({ error: 'Customer name and items are required' });
@@ -2008,6 +2009,7 @@ app.post('/api/customer/orders', async (req, res) => {
       customer_name: customerName,
       customer_email: customerEmail || null,
       customer_phone: customerPhone,
+      table_number: tableNumber || null,
       items: items.map(item => ({
         menu_item_id: item.id,
         name: item.name,

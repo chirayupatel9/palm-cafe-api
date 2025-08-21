@@ -14,6 +14,7 @@ class Order {
           o.customer_name,
           o.customer_email,
           o.customer_phone,
+          o.table_number,
           o.total_amount,
           o.tax_amount,
           o.tip_amount,
@@ -191,6 +192,7 @@ class Order {
         customer_name,
         customer_email,
         customer_phone,
+        table_number,
         items,
         total_amount,
         tax_amount,
@@ -227,12 +229,12 @@ class Order {
       // Create order
       const [orderResult] = await connection.execute(`
         INSERT INTO orders (
-          order_number, customer_id, customer_name, customer_email, customer_phone,
+          order_number, customer_id, customer_name, customer_email, customer_phone, table_number,
           total_amount, tax_amount, tip_amount, points_redeemed, final_amount,
           payment_method, split_payment, split_payment_method, split_amount, extra_charge, extra_charge_note, notes, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
       `, [
-        orderNumber, null, safeCustomerName, safeCustomerEmail, safeCustomerPhone,
+        orderNumber, null, safeCustomerName, safeCustomerEmail, safeCustomerPhone, table_number || null,
         safeTotalAmount, safeTaxAmount, safeTipAmount, orderData.points_redeemed || 0, safeFinalAmount,
         safePaymentMethod, safeSplitPayment, safeSplitPaymentMethod, safeSplitAmount, safeExtraCharge, safeExtraChargeNote, safeNotes
       ]);
