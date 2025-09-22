@@ -2356,6 +2356,59 @@ app.post('/api/customer/register', async (req, res) => {
   }
 });
 
+// Update customer profile (public endpoint - customers can update their own details)
+app.put('/api/customer/profile', async (req, res) => {
+  try {
+    const { id, name, email, address, date_of_birth } = req.body;
+    
+    if (!id) {
+      return res.status(400).json({ error: 'Customer ID is required' });
+    }
+    
+    if (!name) {
+      return res.status(400).json({ error: 'Customer name is required' });
+    }
+
+    // Verify customer exists
+    const existingCustomer = await Customer.getById(id);
+    if (!existingCustomer) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+
+    const customerData = {
+      name: name.trim(),
+      email: email ? email.trim() : null,
+      address: address ? address.trim() : null,
+      date_of_birth: date_of_birth || null
+    };
+
+    const customer = await Customer.update(id, customerData);
+    
+    // Return sanitized customer data (without phone number for security)
+    const sanitizedCustomer = {
+      id: customer.id,
+      name: customer.name,
+      email: customer.email,
+      address: customer.address,
+      date_of_birth: customer.date_of_birth,
+      loyalty_points: customer.loyalty_points,
+      total_spent: customer.total_spent,
+      visit_count: customer.visit_count,
+      first_visit_date: customer.first_visit_date,
+      last_visit_date: customer.last_visit_date,
+      is_active: customer.is_active,
+      notes: customer.notes,
+      created_at: customer.created_at,
+      updated_at: customer.updated_at
+    };
+    
+    res.json(sanitizedCustomer);
+  } catch (error) {
+    console.error('Error updating customer profile:', error);
+    res.status(500).json({ error: 'Failed to update customer profile' });
+  }
+});
+
 // Search customers (admin only)
 app.get('/api/customers/search/:query', auth, async (req, res) => {
   try {
