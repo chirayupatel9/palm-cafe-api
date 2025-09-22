@@ -8,6 +8,8 @@ const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');
 const morgan = require('morgan');
+const http = require('http');
+const WebSocketManager = require('./websocket');
 const { initializeDatabase, testConnection, pool } = require('./config/database');
 const MenuItem = require('./models/menuItem');
 const Category = require('./models/category');
@@ -2085,6 +2087,11 @@ app.patch('/api/orders/:id/status', auth, async (req, res) => {
 
     const updatedOrder = await Order.updateStatus(id, status);
     
+    // Broadcast order update via WebSocket
+    if (global.wsManager) {
+      global.wsManager.broadcastOrderUpdate(updatedOrder);
+    }
+    
     // Award loyalty points when order is completed (only if not already awarded)
     let loyaltyUpdate = null;
     if (status === 'completed' && currentOrder.status !== 'completed' && updatedOrder.customer_id && !currentOrder.points_awarded) {
@@ -2134,6 +2141,12 @@ app.put('/api/orders/:id', auth, async (req, res) => {
     }
 
     const updatedOrder = await Order.update(id, orderData);
+    
+    // Broadcast order update via WebSocket
+    if (global.wsManager) {
+      global.wsManager.broadcastOrderUpdate(updatedOrder);
+    }
+    
     res.json(updatedOrder);
   } catch (error) {
     console.error('Error updating order:', error);
@@ -2151,6 +2164,12 @@ app.post('/api/orders', auth, async (req, res) => {
     }
 
     const newOrder = await Order.create(orderData);
+    
+    // Broadcast new order via WebSocket
+    if (global.wsManager) {
+      global.wsManager.broadcastNewOrder(newOrder);
+    }
+    
     res.status(201).json(newOrder);
   } catch (error) {
     console.error('Error creating order:', error);
@@ -2201,6 +2220,12 @@ app.post('/api/orders/test', auth, async (req, res) => {
     };
     
     const newOrder = await Order.create(testOrder);
+    
+    // Broadcast new test order via WebSocket
+    if (global.wsManager) {
+      global.wsManager.broadcastNewOrder(newOrder);
+    }
+    
     res.status(201).json(newOrder);
   } catch (error) {
     console.error('Error creating test order:', error);
@@ -2613,10 +2638,20 @@ const startServer = async () => {
     // Initialize database
     await initializeDatabase();
 
+    // Create HTTP server
+    const server = http.createServer(app);
+    
+    // Initialize WebSocket manager
+    const wsManager = new WebSocketManager(server);
+    
+    // Make WebSocket manager available globally for broadcasting updates
+    global.wsManager = wsManager;
+    
     // Start server
-    app.listen(PORT, HOST, () => {
+    server.listen(PORT, HOST, () => {
       logger.info(`Cafe Management server running on ${HOST}:${PORT}`);
       logger.info(`API available at http://${HOST}:${PORT}/api`);
+      logger.info(`WebSocket available at ws://${HOST}:${PORT}/ws/orders`);
       logger.info(`Local access: http://${HOST}:${PORT}/api`);
       logger.info('Database connected and initialized successfully');
     });
