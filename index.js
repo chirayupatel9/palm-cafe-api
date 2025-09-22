@@ -995,9 +995,10 @@ app.get('/api/tax-settings', auth, async (req, res) => {
 app.get('/api/tax-settings/menu', async (req, res) => {
   try {
     const taxSettings = await TaxSettings.getCurrent();
-    // Only return show_tax_in_menu flag for customer menu
+    // Return both show_tax_in_menu flag and tax_rate for customer menu
     res.json({
-      show_tax_in_menu: taxSettings.show_tax_in_menu
+      show_tax_in_menu: taxSettings.show_tax_in_menu,
+      tax_rate: taxSettings.tax_rate
     });
   } catch (error) {
     console.error('Error fetching tax settings for menu:', error);
@@ -2260,19 +2261,40 @@ app.get('/api/customers/:id', auth, async (req, res) => {
 });
 
 // Public customer authentication endpoints (no auth required)
-// Search customers by phone for login
-app.get('/api/customer/login/:phone', async (req, res) => {
+// Search customers by phone for login (POST with encrypted payload)
+app.post('/api/customer/login', async (req, res) => {
   try {
-    const { phone } = req.params;
+    const { phone } = req.body;
+    
+    if (!phone) {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
+    
     const customer = await Customer.findByEmailOrPhone(null, phone);
     
     if (customer) {
-      res.json(customer);
+      // Return customer data without sensitive information like phone number
+      const sanitizedCustomer = {
+        id: customer.id,
+        name: customer.name,
+        email: customer.email,
+        address: customer.address,
+        date_of_birth: customer.date_of_birth,
+        loyalty_points: customer.loyalty_points,
+        total_spent: customer.total_spent,
+        visit_count: customer.visit_count,
+        first_visit_date: customer.first_visit_date,
+        last_visit_date: customer.last_visit_date,
+        is_active: customer.is_active,
+        notes: customer.notes,
+        created_at: customer.created_at,
+        updated_at: customer.updated_at
+      };
+      res.json(sanitizedCustomer);
     } else {
       res.status(404).json({ error: 'Customer not found' });
     }
   } catch (error) {
-    console.error('Error finding customer for login:', error);
     res.status(500).json({ error: 'Failed to find customer' });
   }
 });
