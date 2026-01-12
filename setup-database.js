@@ -79,7 +79,19 @@ async function createDatabase() {
     `);
     console.log('✅ Customers table created');
 
-    // Menu items table
+    // Menu items table - check if exists with wrong structure and fix it
+    const [menuItemsTable] = await connection.query(`
+      SELECT COLUMN_TYPE 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'menu_items' AND COLUMN_NAME = 'id'
+    `, [databaseName]);
+    
+    if (menuItemsTable.length > 0 && menuItemsTable[0].COLUMN_TYPE.includes('varchar')) {
+      console.log('⚠️  menu_items table exists with VARCHAR id, dropping to recreate with INT...');
+      await connection.query('DROP TABLE IF EXISTS order_items');
+      await connection.query('DROP TABLE IF EXISTS menu_items');
+    }
+    
     await connection.query(`
       CREATE TABLE IF NOT EXISTS menu_items (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -89,11 +101,27 @@ async function createDatabase() {
         category_id INT,
         is_available BOOLEAN DEFAULT TRUE,
         sort_order INT DEFAULT 0,
+        image_url VARCHAR(255) NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+    
+    // Add image_url column if it doesn't exist (for existing tables)
+    const [imageUrlColumn] = await connection.query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'menu_items' AND COLUMN_NAME = 'image_url'
+    `, [databaseName]);
+    
+    if (imageUrlColumn.length === 0) {
+      await connection.query(`
+        ALTER TABLE menu_items ADD COLUMN image_url VARCHAR(255) NULL
+      `);
+      console.log('✅ Added image_url column to menu_items');
+    }
+    
     console.log('✅ Menu items table created');
 
     // Orders table with all required columns

@@ -1,0 +1,119 @@
+# ========================
+# Palm Cafe API — Cursor Rules
+# ========================
+
+# Project overview
+project:
+  name: "palm-cafe-api"
+  description: |
+    A JavaScript/Node.js API backend for the Palm Cafe application including models,
+    migrations, and endpoints. Use Express/standard JS conventions.
+
+# ========================
+# General guidelines
+# ========================
+
+# 1. Always generate JavaScript (Node.js) code.
+#    Do NOT generate TypeScript unless explicitly asked.
+
+rules:
+  - id: "language.enforced"
+    description: "Only generate JavaScript (Node.js) code using modern syntax (ES2020+)."
+    match: "*.js"
+    apply:
+      - ensure_language: "javascript"
+      - syntax_version: "es2020"
+
+  - id: "module.style"
+    description: "Use CommonJS require/exports consistent with existing code."
+    match: "*.js"
+    apply:
+      - require_module_type: "commonjs"
+
+  - id: "no_typescript"
+    description: "Avoid adding TypeScript types or `.ts` files in this project."
+    match: "**/*"
+    apply:
+      - disallow: ["typescript", ".ts", "type annotations"]
+
+# ========================
+# Formatting and style
+# ========================
+
+  - id: "lint.rules"
+    description: "Follow standard JS formatting and linting style (similar to Airbnb JS)."
+    match: "*.js"
+    apply:
+      - enforce_semi: true
+      - indent: 2
+      - quotation: "single"
+      - trailing_commas: false
+
+# ========================
+# API logic & design
+# ========================
+
+  - id: "express.routes"
+    description: "When generating new route handlers or modifying endpoints, follow Express conventions: separate route logic, middleware, and error handling."
+    match: "routes/**/*.js"
+    apply:
+      - require_structure:
+          - "router = express.Router()"
+          - "module.exports = router"
+
+  - id: "async.error.handling"
+    description: "Use `async/await` consistently and ensure errors are passed to `next(err)` or handled with try/catch."
+    match: "controllers/**/*.js"
+    apply:
+      - enforce_async_await: true
+      - handle_errors_with_next: true
+
+  - id: "response.format"
+    description: "All JSON API responses should use `res.json({...})` and include a consistent status code."
+    match: "controllers/**/*.js"
+    apply:
+      - require_response_format:
+          status: true
+          json: true
+
+# ========================
+# Database & Models
+# ========================
+
+  - id: "models.naming"
+    description: "Models in `/models` should export objects/functions using consistent naming."
+    match: "models/*.js"
+    apply:
+      - enforce_export_style: "module.exports = <Model>"
+
+  - id: "migrations.style"
+    description: "Generated migration files should follow Sequelize/Knex conventions and include `up` and `down` exports."
+    match: "migrations/*.js"
+    apply:
+      - require_functions: ["up", "down"]
+
+# ========================
+# Documentation
+# ========================
+
+  - id: "doc.comments"
+    description: "All functions and complex logic blocks should have JSDoc comments."
+    match: "*.js"
+    apply:
+      - require_jsdoc: true
+
+  - id: "readme.update"
+    description: "When adding significant features, update README with example usage, environment variables, and migrations/instructions."
+    match: "**/*"
+    apply:
+      - remind_update_readme: true
+
+# ========================
+# Tests
+# ========================
+
+  - id: "tests"
+    description: "Add or update tests when generating new endpoints or logic, using a structured testing framework (e.g., Jest/ Mocha)."
+    match: "test/**/*.js"
+    apply:
+      - require_test_structures: ["describe", "it/test blocks"]
