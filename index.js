@@ -95,7 +95,7 @@ app.use(cors({
 app.options('*', cors());
 
 // Apply general rate limiting
-// app.use(generalLimiter);
+app.use(generalLimiter);
 
 // HTTP request logging
 app.use(morgan('combined', { stream: logger.stream }));
@@ -2674,6 +2674,31 @@ app.post('/api/backup', auth, adminAuth, async (req, res) => {
   }
 });
 
+// Global error handler middleware (must be last)
+app.use((err, req, res, next) => {
+  logger.error('Unhandled error:', {
+    error: err.message,
+    stack: err.stack,
+    path: req.path,
+    method: req.method,
+    ip: req.ip
+  });
+
+  // Don't leak error details in production
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal server error',
+    ...(isDevelopment && { stack: err.stack, details: err })
+  });
+});
+
+// 404 handler for undefined routes
+app.use((req, res) => {
+  logger.warn(`404 - Route not found: ${req.method} ${req.path}`);
+  res.status(404).json({ error: 'Route not found' });
+});
+
 // Initialize database and start server
 const startServer = async () => {
   try {
@@ -2713,5 +2738,30 @@ const startServer = async () => {
     process.exit(1);
   }
 };
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // In production, you might want to exit the process
+  // For now, we'll just log it
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  // Exit the process as the application is in an undefined state
+  process.exit(1);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM signal received: closing HTTP server');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT signal received: closing HTTP server');
+  process.exit(0);
+});
 
 startServer(); 
