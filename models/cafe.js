@@ -9,7 +9,7 @@ class Cafe {
    * Create a new cafe
    */
   static async create(cafeData) {
-    const { slug, name, description, logo_url, address, phone, email, website } = cafeData;
+    const { slug, name, description, logo_url, address, phone, email, website, subscription_plan, subscription_status, enabled_modules } = cafeData;
     
     if (!slug || !name) {
       throw new Error('Slug and name are required');
@@ -22,9 +22,21 @@ class Cafe {
 
     try {
       const [result] = await pool.execute(
-        `INSERT INTO cafes (slug, name, description, logo_url, address, phone, email, website, is_active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
-        [slug.toLowerCase(), name, description || null, logo_url || null, address || null, phone || null, email || null, website || null]
+        `INSERT INTO cafes (slug, name, description, logo_url, address, phone, email, website, is_active, subscription_plan, subscription_status, enabled_modules)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?, ?)`,
+        [
+          slug.toLowerCase(), 
+          name, 
+          description || null, 
+          logo_url || null, 
+          address || null, 
+          phone || null, 
+          email || null, 
+          website || null,
+          subscription_plan || 'FREE',
+          subscription_status || 'active',
+          enabled_modules ? JSON.stringify(enabled_modules) : null
+        ]
       );
 
       return await this.getById(result.insertId);
@@ -50,7 +62,17 @@ class Cafe {
         return null;
       }
 
-      return rows[0];
+      const cafe = rows[0];
+      // Parse enabled_modules JSON if present
+      if (cafe.enabled_modules) {
+        try {
+          cafe.enabled_modules = JSON.parse(cafe.enabled_modules);
+        } catch (e) {
+          cafe.enabled_modules = null;
+        }
+      }
+
+      return cafe;
     } catch (error) {
       throw new Error(`Error fetching cafe: ${error.message}`);
     }
@@ -82,10 +104,14 @@ class Cafe {
   static async getAll() {
     try {
       const [rows] = await pool.execute(
-        'SELECT id, slug, name, description, logo_url, address, phone, email, website, is_active, created_at, updated_at FROM cafes ORDER BY name'
+        'SELECT id, slug, name, description, logo_url, address, phone, email, website, is_active, subscription_plan, subscription_status, enabled_modules, created_at, updated_at FROM cafes ORDER BY name'
       );
 
-      return rows;
+      // Parse enabled_modules JSON if present
+      return rows.map(row => ({
+        ...row,
+        enabled_modules: row.enabled_modules ? JSON.parse(row.enabled_modules) : null
+      }));
     } catch (error) {
       throw new Error(`Error fetching cafes: ${error.message}`);
     }
@@ -110,7 +136,7 @@ class Cafe {
    * Update cafe
    */
   static async update(id, cafeData) {
-    const { slug, name, description, logo_url, address, phone, email, website, is_active } = cafeData;
+    const { slug, name, description, logo_url, address, phone, email, website, is_active, subscription_plan, subscription_status, enabled_modules } = cafeData;
 
     try {
       const updateFields = [];
@@ -162,6 +188,21 @@ class Cafe {
       if (is_active !== undefined) {
         updateFields.push('is_active = ?');
         updateValues.push(is_active);
+      }
+
+      if (subscription_plan !== undefined) {
+        updateFields.push('subscription_plan = ?');
+        updateValues.push(subscription_plan);
+      }
+
+      if (subscription_status !== undefined) {
+        updateFields.push('subscription_status = ?');
+        updateValues.push(subscription_status);
+      }
+
+      if (enabled_modules !== undefined) {
+        updateFields.push('enabled_modules = ?');
+        updateValues.push(enabled_modules ? JSON.stringify(enabled_modules) : null);
       }
 
       if (updateFields.length === 0) {

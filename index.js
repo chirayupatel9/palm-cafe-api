@@ -23,8 +23,10 @@ const Order = require('./models/order');
 const Customer = require('./models/customer');
 const Cafe = require('./models/cafe');
 const CafeMetrics = require('./models/cafeMetrics');
+const subscriptionService = require('./services/subscriptionService');
 const { auth, adminAuth, chefAuth, JWT_SECRET } = require('./middleware/auth');
 const { validateCafeAccess, requireSuperAdmin } = require('./middleware/cafeAuth');
+const { requireModule, requireActiveSubscription } = require('./middleware/subscriptionAuth');
 const logger = require('./config/logger');
 const { generalLimiter, authLimiter, uploadLimiter, apiLimiter } = require('./middleware/rateLimiter');
 const PaymentMethod = require('./models/paymentMethod');
@@ -898,7 +900,10 @@ app.put('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
       phone,
       email,
       website,
-      is_active
+      is_active,
+      subscription_plan: req.body.subscription_plan,
+      subscription_status: req.body.subscription_status,
+      enabled_modules: req.body.enabled_modules
     });
 
     res.json({
@@ -908,6 +913,124 @@ app.put('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
   } catch (error) {
     console.error('Error updating cafe:', error);
     res.status(500).json({ error: error.message || 'Failed to update cafe' });
+  }
+});
+
+// ========================
+// Subscription Management (Super Admin only)
+// ========================
+
+// Get subscription info for a cafe
+app.get('/api/superadmin/cafes/:id/subscription', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const subscription = await subscriptionService.getCafeSubscription(id);
+    
+    if (!subscription) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+    
+    // Get available plans and modules
+    const plans = subscriptionService.getAllPlans();
+    const modules = subscriptionService.getAllModules();
+    const planFeatures = {};
+    
+    plans.forEach(plan => {
+      planFeatures[plan] = subscriptionService.getPlanFeatures(plan);
+    });
+    
+    res.json({
+      subscription,
+      available_plans: plans,
+      available_modules: modules,
+      plan_features: planFeatures
+    });
+  } catch (error) {
+    console.error('Error fetching subscription:', error);
+    res.status(500).json({ error: 'Failed to fetch subscription' });
+  }
+});
+
+// Update cafe subscription
+app.put('/api/superadmin/cafes/:id/subscription', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { plan, status, enabled_modules } = req.body;
+    
+    const updatedCafe = await subscriptionService.updateCafeSubscription(id, {
+      plan,
+      status,
+      enabledModules: enabled_modules
+    });
+    
+    res.json({
+      message: 'Subscription updated successfully',
+      cafe: updatedCafe
+    });
+  } catch (error) {
+    console.error('Error updating subscription:', error);
+    res.status(500).json({ error: error.message || 'Failed to update subscription' });
+  }
+});
+
+// Toggle a specific module for a cafe (Super Admin override)
+app.post('/api/superadmin/cafes/:id/subscription/modules/:module/toggle', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id, module } = req.params;
+    const { enabled } = req.body;
+    
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
+    
+    const updatedCafe = await subscriptionService.toggleCafeModule(id, module, enabled);
+    
+    res.json({
+      message: `Module ${module} ${enabled ? 'enabled' : 'disabled'} successfully`,
+      cafe: updatedCafe
+    });
+  } catch (error) {
+    console.error('Error toggling module:', error);
+    res.status(500).json({ error: error.message || 'Failed to toggle module' });
+  }
+});
+
+// ========================
+// Cafe-Scoped Subscription Endpoint (for regular users)
+// ========================
+
+// Get subscription info for current user's cafe
+app.get('/api/subscription', auth, async (req, res) => {
+  try {
+    if (!req.user || !req.user.cafe_id) {
+      return res.status(400).json({ error: 'User must belong to a cafe' });
+    }
+
+    const subscription = await subscriptionService.getCafeSubscription(req.user.cafe_id);
+    
+    if (!subscription) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+    
+    // Get available plans and modules (for display purposes)
+    const plans = subscriptionService.getAllPlans();
+    const modules = subscriptionService.getAllModules();
+    const planFeatures = {};
+    
+    plans.forEach(plan => {
+      planFeatures[plan] = subscriptionService.getPlanFeatures(plan);
+    });
+    
+    res.json({
+      subscription,
+      available_plans: plans,
+      available_modules: modules,
+      plan_features: planFeatures
+    });
+  } catch (error) {
+    console.error('Error fetching subscription:', error);
+    res.status(500).json({ error: 'Failed to fetch subscription' });
   }
 });
 
@@ -1361,7 +1484,7 @@ app.delete('/api/categories/:id', async (req, res) => {
 
 // Get all menu items
 // Supports both old pattern (no cafe) and new pattern (with cafe)
-app.get('/api/menu', auth, async (req, res) => {
+app.get('/api/menu', auth, requireActiveSubscription, requireModule('menu_management'), async (req, res) => {
   try {
     let cafeId = null;
     
@@ -1395,7 +1518,7 @@ app.get('/api/menu', auth, async (req, res) => {
 
 // Get menu items grouped by category
 // Supports both old pattern (no cafe) and new pattern (with cafe)
-app.get('/api/menu/grouped', auth, async (req, res) => {
+app.get('/api/menu/grouped', auth, requireActiveSubscription, requireModule('menu_management'), async (req, res) => {
   try {
     let cafeId = null;
     
@@ -1428,7 +1551,7 @@ app.get('/api/menu/grouped', auth, async (req, res) => {
 });
 
 // Add new menu item
-app.post('/api/menu', auth, async (req, res) => {
+app.post('/api/menu', auth, requireActiveSubscription, requireModule('menu_management'), async (req, res) => {
   try {
     const { category_id, name, description, price, sort_order, image_url } = req.body;
     
@@ -2324,7 +2447,7 @@ app.get('/api/reports/top-items', async (req, res) => {
 // Inventory Management Routes
 
 // Get all inventory items
-app.get('/api/inventory', auth, async (req, res) => {
+app.get('/api/inventory', auth, requireActiveSubscription, requireModule('inventory'), async (req, res) => {
   try {
     const inventory = await Inventory.getAll();
     res.json(inventory);
@@ -2335,7 +2458,7 @@ app.get('/api/inventory', auth, async (req, res) => {
 });
 
 // Create new inventory item
-app.post('/api/inventory', auth, async (req, res) => {
+app.post('/api/inventory', auth, requireActiveSubscription, requireModule('inventory'), async (req, res) => {
   try {
     const { name, category, quantity, unit, cost_per_unit, supplier, reorder_level, description } = req.body;
     
@@ -2629,7 +2752,7 @@ const generateThermalPrintContent = async (order) => {
 
 // Order endpoints
 // Get all orders (admin only)
-app.get('/api/orders', auth, async (req, res) => {
+app.get('/api/orders', auth, requireActiveSubscription, async (req, res) => {
   try {
     const { customer_phone, order_number } = req.query;
     
@@ -2856,7 +2979,7 @@ app.put('/api/orders/:id', auth, async (req, res) => {
 });
 
 // Create new order
-app.post('/api/orders', auth, async (req, res) => {
+app.post('/api/orders', auth, requireActiveSubscription, async (req, res) => {
   try {
     const orderData = req.body;
     
