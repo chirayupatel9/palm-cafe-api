@@ -1,10 +1,22 @@
 const { pool } = require('../config/database');
 
 class MenuItem {
-  // Get all menu items with category information
-  static async getAll() {
+  // Get all menu items with category information (filtered by cafeId)
+  // cafeId is optional for backward compatibility during migration
+  static async getAll(cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'menu_items' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
+      let query = `
         SELECT 
           m.id,
           m.category_id,
@@ -20,8 +32,23 @@ class MenuItem {
         FROM menu_items m
         LEFT JOIN categories c ON m.category_id = c.id
         WHERE m.is_available = TRUE
-        ORDER BY c.sort_order, m.sort_order, m.name
-      `);
+      `;
+      
+      const params = [];
+      
+      if (hasCafeId) {
+        if (cafeId) {
+          query += ' AND m.cafe_id = ?';
+          params.push(cafeId);
+        } else {
+          // If cafe_id column exists but no cafeId provided, this is an error
+          throw new Error('cafeId is required when cafe_id column exists');
+        }
+      }
+      
+      query += ' ORDER BY c.sort_order, m.sort_order, m.name';
+      
+      const [rows] = await pool.execute(query, params);
       
       return rows.map(row => ({
         ...row,
@@ -33,10 +60,30 @@ class MenuItem {
     }
   }
 
-  // Get menu items grouped by category
-  static async getGroupedByCategory() {
+  // Get menu items grouped by category (filtered by cafeId)
+  // cafeId is optional for backward compatibility during migration
+  static async getGroupedByCategory(cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
+      // Check if cafe_id column exists
+      const [menuColumns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'menu_items' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const [categoryColumns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'categories' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = menuColumns.length > 0 && categoryColumns.length > 0;
+      
+      let query = `
         SELECT 
           c.id as category_id,
           c.name as category_name,
@@ -51,8 +98,22 @@ class MenuItem {
         FROM categories c
         LEFT JOIN menu_items m ON c.id = m.category_id AND m.is_available = TRUE
         WHERE c.is_active = TRUE
-        ORDER BY c.sort_order, m.sort_order, m.name
-      `);
+      `;
+      
+      const params = [];
+      
+      if (hasCafeId) {
+        if (cafeId) {
+          query += ' AND m.cafe_id = ? AND c.cafe_id = ?';
+          params.push(cafeId, cafeId);
+        } else {
+          throw new Error('cafeId is required when cafe_id column exists');
+        }
+      }
+      
+      query += ' ORDER BY c.sort_order, m.sort_order, m.name';
+      
+      const [rows] = await pool.execute(query, params);
       
       const grouped = {};
       rows.forEach(row => {
@@ -119,21 +180,44 @@ class MenuItem {
     }
   }
 
-  // Create new menu item
+  // Create new menu item (cafe_id optional for backward compatibility)
   static async create(menuItemData) {
     try {
-      const { category_id, name, description, price, sort_order, image_url } = menuItemData;
+      const { category_id, name, description, price, sort_order, image_url, cafe_id } = menuItemData;
       
       if (!category_id) {
         throw new Error('Category ID is required');
       }
+
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'menu_items' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
       
-      const [result] = await pool.execute(
-        'INSERT INTO menu_items (category_id, name, description, price, sort_order, image_url) VALUES (?, ?, ?, ?, ?, ?)',
-        [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0, image_url || null]
-      );
+      const hasCafeId = columns.length > 0;
       
-      return await this.getById(result.insertId);
+      if (hasCafeId && !cafe_id) {
+        throw new Error('Cafe ID is required when cafe_id column exists');
+      }
+      
+      if (hasCafeId) {
+        const [result] = await pool.execute(
+          'INSERT INTO menu_items (category_id, name, description, price, sort_order, image_url, cafe_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0, image_url || null, cafe_id]
+        );
+        return await this.getById(result.insertId);
+      } else {
+        // Backward compatibility: insert without cafe_id
+        const [result] = await pool.execute(
+          'INSERT INTO menu_items (category_id, name, description, price, sort_order, image_url) VALUES (?, ?, ?, ?, ?, ?)',
+          [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0, image_url || null]
+        );
+        return await this.getById(result.insertId);
+      }
     } catch (error) {
       throw new Error(`Error creating menu item: ${error.message}`);
     }
