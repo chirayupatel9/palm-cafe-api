@@ -540,8 +540,10 @@ app.post('/api/auth/register-superadmin', auth, async (req, res) => {
 // ========================
 // Super Admin Routes - Cafe Management
 // ========================
+// NOTE: Route order is CRITICAL in Express.js - more specific routes MUST come before parameterized routes
+// Order: 1) Exact paths, 2) Paths with specific segments, 3) Parameterized routes
 
-// Get all cafes (Super Admin only)
+// Get all cafes (Super Admin only) - Base route, no params
 app.get('/api/superadmin/cafes', auth, requireSuperAdmin, async (req, res) => {
   try {
     const cafes = await Cafe.getAll();
@@ -552,35 +554,7 @@ app.get('/api/superadmin/cafes', auth, requireSuperAdmin, async (req, res) => {
   }
 });
 
-// Get active cafes only (Super Admin only)
-app.get('/api/superadmin/cafes/active', auth, requireSuperAdmin, async (req, res) => {
-  try {
-    const cafes = await Cafe.getActive();
-    res.json(cafes);
-  } catch (error) {
-    console.error('Error fetching active cafes:', error);
-    res.status(500).json({ error: 'Failed to fetch active cafes' });
-  }
-});
-
-// Get cafe by ID (Super Admin only)
-app.get('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const cafe = await Cafe.getById(id);
-    
-    if (!cafe) {
-      return res.status(404).json({ error: 'Cafe not found' });
-    }
-    
-    res.json(cafe);
-  } catch (error) {
-    console.error('Error fetching cafe:', error);
-    res.status(500).json({ error: 'Failed to fetch cafe' });
-  }
-});
-
-// Create new cafe (Super Admin only)
+// Create new cafe (Super Admin only) - Base route, no params
 app.post('/api/superadmin/cafes', auth, requireSuperAdmin, async (req, res) => {
   try {
     const { slug, name, description, logo_url, address, phone, email, website } = req.body;
@@ -619,6 +593,280 @@ app.post('/api/superadmin/cafes', auth, requireSuperAdmin, async (req, res) => {
   } catch (error) {
     console.error('Error creating cafe:', error);
     res.status(500).json({ error: error.message || 'Failed to create cafe' });
+  }
+});
+
+// Get active cafes only (Super Admin only) - Specific path segment
+app.get('/api/superadmin/cafes/active', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const cafes = await Cafe.getActive();
+    res.json(cafes);
+  } catch (error) {
+    console.error('Error fetching active cafes:', error);
+    res.status(500).json({ error: 'Failed to fetch active cafes' });
+  }
+});
+
+// Get cafe metrics overview (Super Admin only) - Specific path segment
+app.get('/api/superadmin/cafes/metrics/overview', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const cafesWithMetrics = await CafeMetrics.getAllCafesMetrics();
+    res.json(cafesWithMetrics);
+  } catch (error) {
+    console.error('Error fetching cafes metrics overview:', error);
+    res.status(500).json({ error: 'Failed to fetch cafes metrics overview' });
+  }
+});
+
+// Get cafe users (Super Admin only) - Specific path with param + segment
+app.get('/api/superadmin/cafes/:cafeId/users', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { cafeId } = req.params;
+    
+    // Verify cafe exists
+    const cafe = await Cafe.getById(cafeId);
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+    
+    // Get all users for this cafe
+    const users = await User.getAll(parseInt(cafeId));
+    
+    res.json(users);
+  } catch (error) {
+    console.error('Error fetching cafe users:', error);
+    res.status(500).json({ error: 'Failed to fetch cafe users' });
+  }
+});
+
+// Create cafe user (Super Admin only) - Specific path with param + segment
+app.post('/api/superadmin/cafes/:cafeId/users', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { cafeId } = req.params;
+    const { username, email, password, role } = req.body;
+    
+    // Validate input
+    if (!username || !email || !password || !role) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+    
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    }
+    
+    // Verify role is valid (not superadmin)
+    if (role === 'superadmin') {
+      return res.status(400).json({ error: 'Cannot create superadmin users via cafe endpoint' });
+    }
+    
+    // Verify cafe exists
+    const cafe = await Cafe.getById(cafeId);
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+    
+    // Check if user already exists
+    const existingUser = await User.findByEmail(email);
+    if (existingUser) {
+      return res.status(400).json({ error: 'User with this email already exists' });
+    }
+    
+    // Create new user with cafe assignment
+    const user = await User.create({ 
+      username, 
+      email, 
+      password, 
+      role,
+      cafe_id: parseInt(cafeId)
+    });
+    
+    const userWithCafe = await User.findByIdWithCafe(user.id);
+    
+    res.status(201).json({
+      message: 'User created successfully',
+      user: userWithCafe
+    });
+  } catch (error) {
+    console.error('Error creating cafe user:', error);
+    res.status(500).json({ error: 'Failed to create user' });
+  }
+});
+
+// Get cafe by ID metrics (Super Admin only) - Specific path with param + segment
+app.get('/api/superadmin/cafes/:id/metrics', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Verify cafe exists
+    const cafe = await Cafe.getById(id);
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+    
+    const metrics = await CafeMetrics.getCafeMetrics(parseInt(id));
+    
+    res.json({
+      cafe: {
+        id: cafe.id,
+        slug: cafe.slug,
+        name: cafe.name
+      },
+      metrics: metrics
+    });
+  } catch (error) {
+    console.error('Error fetching cafe metrics:', error);
+    res.status(500).json({ error: 'Failed to fetch cafe metrics' });
+  }
+});
+
+// Get cafe settings (Super Admin only) - Specific path with param + segment
+app.get('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Verify cafe exists
+    const cafe = await Cafe.getById(id);
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+    
+    // Get cafe settings (scoped to cafe_id if column exists)
+    try {
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'cafe_settings' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      let settings;
+      if (columns.length > 0) {
+        const [rows] = await pool.execute(
+          'SELECT * FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1',
+          [id]
+        );
+        settings = rows[0] || null;
+      } else {
+        // Fallback to global settings if cafe_id column doesn't exist
+        settings = await CafeSettings.getCurrent();
+      }
+      
+      res.json({
+        cafe: {
+          id: cafe.id,
+          slug: cafe.slug,
+          name: cafe.name
+        },
+        settings: settings || {}
+      });
+    } catch (error) {
+      // If cafe_settings table doesn't exist, return empty settings
+      res.json({
+        cafe: {
+          id: cafe.id,
+          slug: cafe.slug,
+          name: cafe.name
+        },
+        settings: {}
+      });
+    }
+  } catch (error) {
+    console.error('Error fetching cafe settings:', error);
+    res.status(500).json({ error: 'Failed to fetch cafe settings' });
+  }
+});
+
+// Update cafe settings (Super Admin only) - Specific path with param + segment
+app.put('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const settingsData = req.body;
+    
+    // Verify cafe exists
+    const cafe = await Cafe.getById(id);
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+    
+    // Check if cafe_settings table has cafe_id column
+    const [columns] = await pool.execute(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'cafe_settings' 
+      AND COLUMN_NAME = 'cafe_id'
+    `);
+    
+    if (columns.length === 0) {
+      return res.status(400).json({ error: 'Cafe settings are not yet scoped to cafes. Please run migration first.' });
+    }
+    
+    // Update or create cafe settings
+    const [existing] = await pool.execute(
+      'SELECT id FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE',
+      [id]
+    );
+    
+    if (existing.length > 0) {
+      // Update existing settings
+      const updateFields = Object.keys(settingsData)
+        .filter(key => key !== 'id' && key !== 'cafe_id' && key !== 'created_at' && key !== 'updated_at')
+        .map(key => `${key} = ?`)
+        .join(', ');
+      
+      const updateValues = Object.keys(settingsData)
+        .filter(key => key !== 'id' && key !== 'cafe_id' && key !== 'created_at' && key !== 'updated_at')
+        .map(key => settingsData[key]);
+      
+      updateValues.push(id);
+      
+      await pool.execute(
+        `UPDATE cafe_settings SET ${updateFields}, updated_at = CURRENT_TIMESTAMP WHERE cafe_id = ? AND is_active = TRUE`,
+        updateValues
+      );
+    } else {
+      // Create new settings
+      const fields = ['cafe_id', ...Object.keys(settingsData).filter(key => key !== 'id' && key !== 'created_at' && key !== 'updated_at')];
+      const placeholders = fields.map(() => '?').join(', ');
+      const values = [id, ...Object.values(settingsData)];
+      
+      await pool.execute(
+        `INSERT INTO cafe_settings (${fields}, is_active, created_at, updated_at) VALUES (${placeholders}, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        values
+      );
+    }
+    
+    // Fetch updated settings
+    const [updated] = await pool.execute(
+      'SELECT * FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1',
+      [id]
+    );
+    
+    res.json({
+      message: 'Cafe settings updated successfully',
+      settings: updated[0]
+    });
+  } catch (error) {
+    console.error('Error updating cafe settings:', error);
+    res.status(500).json({ error: 'Failed to update cafe settings' });
+  }
+});
+
+// Get cafe by ID (Super Admin only) - Generic parameterized route - MUST be LAST
+app.get('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const cafe = await Cafe.getById(id);
+    
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+    
+    res.json(cafe);
+  } catch (error) {
+    console.error('Error fetching cafe:', error);
+    res.status(500).json({ error: 'Failed to fetch cafe' });
   }
 });
 
@@ -677,46 +925,6 @@ app.delete('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res
   } catch (error) {
     console.error('Error deleting cafe:', error);
     res.status(500).json({ error: error.message || 'Failed to delete cafe' });
-  }
-});
-
-// Get cafe metrics/overview (Super Admin only)
-app.get('/api/superadmin/cafes/:id/metrics', auth, requireSuperAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    // Verify cafe exists
-    const cafe = await Cafe.getById(id);
-    if (!cafe) {
-      return res.status(404).json({ error: 'Cafe not found' });
-    }
-    
-    const metrics = await CafeMetrics.getCafeMetrics(parseInt(id));
-    
-    res.json({
-      cafe: {
-        id: cafe.id,
-        slug: cafe.slug,
-        name: cafe.name,
-        is_active: cafe.is_active
-      },
-      metrics
-    });
-  } catch (error) {
-    console.error('Error fetching cafe metrics:', error);
-    res.status(500).json({ error: 'Failed to fetch cafe metrics' });
-  }
-});
-
-// Get metrics for all cafes (Super Admin overview)
-app.get('/api/superadmin/cafes/metrics/overview', auth, requireSuperAdmin, async (req, res) => {
-  try {
-    const cafesWithMetrics = await CafeMetrics.getAllCafesMetrics();
-    
-    res.json(cafesWithMetrics);
-  } catch (error) {
-    console.error('Error fetching cafes overview:', error);
-    res.status(500).json({ error: 'Failed to fetch cafes overview' });
   }
 });
 
@@ -792,137 +1000,116 @@ app.put('/api/superadmin/users/:id/assign-cafe', auth, requireSuperAdmin, async 
   }
 });
 
-// Get cafe settings for a specific cafe (Super Admin only)
-app.get('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (req, res) => {
+// Update user (Super Admin only)
+app.put('/api/superadmin/users/:id', auth, requireSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    const { username, email, role, cafe_id, is_active } = req.body;
     
-    // Verify cafe exists
-    const cafe = await Cafe.getById(id);
-    if (!cafe) {
-      return res.status(404).json({ error: 'Cafe not found' });
+    // Verify user exists
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
     }
     
-    // Get cafe settings (scoped to cafe_id if column exists)
-    try {
-      const [columns] = await pool.execute(`
-        SELECT COLUMN_NAME 
-        FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_SCHEMA = DATABASE() 
-        AND TABLE_NAME = 'cafe_settings' 
-        AND COLUMN_NAME = 'cafe_id'
-      `);
-      
-      let settings;
-      if (columns.length > 0) {
-        const [rows] = await pool.execute(
-          'SELECT * FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1',
-          [id]
-        );
-        settings = rows[0] || null;
-      } else {
-        // Fallback to global settings if cafe_id column doesn't exist
-        settings = await CafeSettings.getCurrent();
+    // Super Admin users cannot be modified via this endpoint
+    if (user.role === 'superadmin' && (role !== 'superadmin' || cafe_id)) {
+      return res.status(400).json({ error: 'Super Admin users cannot be modified this way' });
+    }
+    
+    // Build update query dynamically
+    const updates = [];
+    const params = [];
+    
+    if (username !== undefined) {
+      updates.push('username = ?');
+      params.push(username);
+    }
+    
+    if (email !== undefined) {
+      // Check if email is already taken by another user
+      const existingUser = await User.findByEmail(email);
+      if (existingUser && existingUser.id !== parseInt(id)) {
+        return res.status(400).json({ error: 'Email already in use' });
       }
-      
-      res.json({
-        cafe: {
-          id: cafe.id,
-          slug: cafe.slug,
-          name: cafe.name
-        },
-        settings: settings || {}
-      });
-    } catch (error) {
-      // If cafe_settings table doesn't exist, return empty settings
-      res.json({
-        cafe: {
-          id: cafe.id,
-          slug: cafe.slug,
-          name: cafe.name
-        },
-        settings: {}
-      });
+      updates.push('email = ?');
+      params.push(email);
     }
+    
+    if (role !== undefined && role !== 'superadmin') {
+      updates.push('role = ?');
+      params.push(role);
+    }
+    
+    if (cafe_id !== undefined && user.role !== 'superadmin') {
+      // Verify cafe exists if cafe_id is provided
+      if (cafe_id) {
+        const cafe = await Cafe.getById(cafe_id);
+        if (!cafe) {
+          return res.status(404).json({ error: 'Cafe not found' });
+        }
+      }
+      updates.push('cafe_id = ?');
+      params.push(cafe_id || null);
+    }
+    
+    if (is_active !== undefined) {
+      updates.push('is_active = ?');
+      params.push(is_active ? 1 : 0);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    
+    updates.push('updated_at = NOW()');
+    params.push(id);
+    
+    await pool.execute(
+      `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+      params
+    );
+    
+    const updatedUser = await User.findByIdWithCafe(id);
+    
+    res.json({
+      message: 'User updated successfully',
+      user: updatedUser
+    });
   } catch (error) {
-    console.error('Error fetching cafe settings:', error);
-    res.status(500).json({ error: 'Failed to fetch cafe settings' });
+    console.error('Error updating user:', error);
+    res.status(500).json({ error: 'Failed to update user' });
   }
 });
 
-// Update cafe settings for a specific cafe (Super Admin only)
-app.put('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (req, res) => {
+// Delete/Disable user (Super Admin only)
+app.delete('/api/superadmin/users/:id', auth, requireSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const settingsData = req.body;
     
-    // Verify cafe exists
-    const cafe = await Cafe.getById(id);
-    if (!cafe) {
-      return res.status(404).json({ error: 'Cafe not found' });
+    // Verify user exists
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
     }
     
-    // Check if cafe_settings table has cafe_id column
-    const [columns] = await pool.execute(`
-      SELECT COLUMN_NAME 
-      FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_SCHEMA = DATABASE() 
-      AND TABLE_NAME = 'cafe_settings' 
-      AND COLUMN_NAME = 'cafe_id'
-    `);
-    
-    if (columns.length === 0) {
-      return res.status(400).json({ error: 'Cafe settings are not yet scoped to cafes. Please run migration first.' });
+    // Super Admin users cannot be deleted
+    if (user.role === 'superadmin') {
+      return res.status(400).json({ error: 'Super Admin users cannot be deleted' });
     }
     
-    // Update or create cafe settings
-    const [existing] = await pool.execute(
-      'SELECT id FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE',
-      [id]
-    );
-    
-    if (existing.length > 0) {
-      // Update existing settings
-      const updateFields = Object.keys(settingsData)
-        .filter(key => key !== 'id' && key !== 'cafe_id' && key !== 'created_at' && key !== 'updated_at')
-        .map(key => `${key} = ?`)
-        .join(', ');
-      
-      const updateValues = Object.keys(settingsData)
-        .filter(key => key !== 'id' && key !== 'cafe_id' && key !== 'created_at' && key !== 'updated_at')
-        .map(key => settingsData[key]);
-      
-      updateValues.push(id);
-      
-      await pool.execute(
-        `UPDATE cafe_settings SET ${updateFields}, updated_at = CURRENT_TIMESTAMP WHERE cafe_id = ? AND is_active = TRUE`,
-        updateValues
-      );
-    } else {
-      // Create new settings
-      const fields = ['cafe_id', ...Object.keys(settingsData)].join(', ');
-      const placeholders = ['?', ...Object.keys(settingsData).map(() => '?')].join(', ');
-      const values = [id, ...Object.values(settingsData)];
-      
-      await pool.execute(
-        `INSERT INTO cafe_settings (${fields}, is_active, created_at, updated_at) VALUES (${placeholders}, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-        values
-      );
-    }
-    
-    // Fetch updated settings
-    const [updated] = await pool.execute(
-      'SELECT * FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1',
+    // Soft delete: set is_active to false
+    await pool.execute(
+      'UPDATE users SET is_active = 0, updated_at = NOW() WHERE id = ?',
       [id]
     );
     
     res.json({
-      message: 'Cafe settings updated successfully',
-      settings: updated[0]
+      message: 'User disabled successfully'
     });
   } catch (error) {
-    console.error('Error updating cafe settings:', error);
-    res.status(500).json({ error: 'Failed to update cafe settings' });
+    console.error('Error deleting user:', error);
+    res.status(500).json({ error: 'Failed to delete user' });
   }
 });
 
