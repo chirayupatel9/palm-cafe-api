@@ -184,23 +184,26 @@ async function updateCafeSubscription(cafeId, subscriptionData, changedBy = null
     
     const updateData = {};
     
-    if (plan !== undefined) {
-      if (!getAllPlans().includes(plan)) {
-        throw new Error(`Invalid subscription plan: ${plan}`);
+    if (plan !== undefined && plan !== null) {
+      // Normalize plan value (uppercase)
+      const normalizedPlan = plan.toUpperCase();
+      
+      if (!getAllPlans().includes(normalizedPlan)) {
+        throw new Error(`Invalid subscription plan: ${plan}. Valid plans are: ${getAllPlans().join(', ')}`);
       }
       
       // Log plan change
-      if (currentCafe.subscription_plan !== plan) {
+      if (currentCafe.subscription_plan !== normalizedPlan) {
         await auditService.logAuditEvent(
           cafeId,
           auditService.ACTION_TYPES.PLAN_CHANGED,
           currentCafe.subscription_plan || 'FREE',
-          plan,
+          normalizedPlan,
           changedBy
         );
       }
       
-      updateData.subscription_plan = plan;
+      updateData.subscription_plan = normalizedPlan;
     }
     
     if (status !== undefined) {
@@ -230,7 +233,15 @@ async function updateCafeSubscription(cafeId, subscriptionData, changedBy = null
       throw new Error('No subscription data provided');
     }
     
-    return await Cafe.update(cafeId, updateData);
+    console.log('Calling Cafe.update with:', updateData);
+    const updatedCafe = await Cafe.update(cafeId, updateData);
+    console.log('Cafe.update returned:', {
+      id: updatedCafe.id,
+      subscription_plan: updatedCafe.subscription_plan,
+      subscription_status: updatedCafe.subscription_status
+    });
+    
+    return updatedCafe;
   } catch (error) {
     throw new Error(`Error updating cafe subscription: ${error.message}`);
   }

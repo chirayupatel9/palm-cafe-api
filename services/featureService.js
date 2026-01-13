@@ -48,15 +48,29 @@ async function resolveCafeFeatures(cafeId) {
     for (const feature of allFeatures) {
       // Check if there's a cafe override
       if (overrides.hasOwnProperty(feature.key)) {
-        featureMap[feature.key] = overrides[feature.key] === true;
+        // MySQL returns 1/0 for BOOLEAN, convert to boolean
+        const overrideValue = overrides[feature.key];
+        featureMap[feature.key] = overrideValue === true || overrideValue === 1;
       } else {
         // Use plan default
+        // MySQL returns 1/0 for BOOLEAN, convert to boolean
         if (plan === 'PRO') {
-          featureMap[feature.key] = feature.default_pro === true;
+          featureMap[feature.key] = feature.default_pro === true || feature.default_pro === 1;
         } else {
-          featureMap[feature.key] = feature.default_free === true;
+          featureMap[feature.key] = feature.default_free === true || feature.default_free === 1;
         }
       }
+    }
+    
+    // Debug logging for menu_management
+    if (featureMap.hasOwnProperty('menu_management')) {
+      console.log('🔍 Feature Resolution for menu_management:', {
+        cafeId,
+        plan,
+        status,
+        resolved: featureMap['menu_management'],
+        allFeatures: Object.keys(featureMap).filter(k => featureMap[k] === true)
+      });
     }
 
     return featureMap;
@@ -71,7 +85,29 @@ async function resolveCafeFeatures(cafeId) {
 async function cafeHasFeature(cafeId, featureKey) {
   try {
     const features = await resolveCafeFeatures(cafeId);
-    return features[featureKey] === true;
+    const hasAccess = features[featureKey] === true;
+    
+    // Debug logging for menu_management specifically
+    if (featureKey === 'menu_management') {
+      const cafe = await Cafe.getById(cafeId);
+      const feature = await Feature.getByKey(featureKey);
+      const overrides = await Feature.getCafeOverrides(cafeId);
+      
+      console.log('🔍 Menu Management Feature Check:', {
+        cafeId,
+        cafePlan: cafe?.subscription_plan,
+        cafeStatus: cafe?.subscription_status,
+        featureExists: !!feature,
+        featureDefaultFree: feature?.default_free,
+        featureDefaultPro: feature?.default_pro,
+        hasOverride: overrides.hasOwnProperty(featureKey),
+        overrideValue: overrides[featureKey],
+        resolvedValue: features[featureKey],
+        hasAccess
+      });
+    }
+    
+    return hasAccess;
   } catch (error) {
     console.error('Error checking feature access:', error);
     return false;

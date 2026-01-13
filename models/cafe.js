@@ -310,16 +310,33 @@ class Cafe {
       updateFields.push('updated_at = CURRENT_TIMESTAMP');
       updateValues.push(id);
 
+      console.log('Executing UPDATE query:', {
+        query: `UPDATE cafes SET ${updateFields.join(', ')} WHERE id = ?`,
+        values: updateValues.map((v, i) => i === updateValues.length - 1 ? `[id=${v}]` : v)
+      });
+      
       const [result] = await pool.execute(
         `UPDATE cafes SET ${updateFields.join(', ')} WHERE id = ?`,
         updateValues
       );
 
+      console.log('UPDATE result:', {
+        affectedRows: result.affectedRows,
+        changedRows: result.changedRows
+      });
+
       if (result.affectedRows === 0) {
         throw new Error('Cafe not found');
       }
 
-      return await this.getById(id);
+      const updatedCafe = await this.getById(id);
+      console.log('Fetched updated cafe:', {
+        id: updatedCafe.id,
+        subscription_plan: updatedCafe.subscription_plan,
+        subscription_status: updatedCafe.subscription_status
+      });
+      
+      return updatedCafe;
     } catch (error) {
       if (error.code === 'ER_DUP_ENTRY') {
         throw new Error('A cafe with this slug already exists');

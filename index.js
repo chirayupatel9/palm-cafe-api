@@ -962,14 +962,39 @@ app.put('/api/superadmin/cafes/:id/subscription', auth, requireSuperAdmin, async
     const { id } = req.params;
     const { plan, status } = req.body;
     
+    // Validate input
+    if (plan === undefined && status === undefined) {
+      return res.status(400).json({ error: 'Either plan or status must be provided' });
+    }
+    
+    console.log(`Updating subscription for cafe ${id}: plan=${plan}, status=${status}`);
+    
     const updatedCafe = await subscriptionService.updateCafeSubscription(id, {
       plan,
       status
     }, req.user.id);
     
+    console.log(`Subscription updated successfully. Updated cafe object:`, {
+      id: updatedCafe.id,
+      subscription_plan: updatedCafe.subscription_plan,
+      subscription_status: updatedCafe.subscription_status
+    });
+    
+    // Verify the update by fetching fresh data
+    const freshCafe = await Cafe.getById(id);
+    const freshSubscription = await subscriptionService.getCafeSubscription(id);
+    
+    console.log(`Fresh data after update:`, {
+      cafe_plan: freshCafe?.subscription_plan,
+      cafe_status: freshCafe?.subscription_status,
+      subscription_plan: freshSubscription?.plan,
+      subscription_status: freshSubscription?.status
+    });
+    
     res.json({
       message: 'Subscription updated successfully',
-      cafe: updatedCafe
+      cafe: freshCafe || updatedCafe,
+      subscription: freshSubscription
     });
   } catch (error) {
     console.error('Error updating subscription:', error);
