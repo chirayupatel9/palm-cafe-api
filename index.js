@@ -24,6 +24,9 @@ const Customer = require('./models/customer');
 const Cafe = require('./models/cafe');
 const CafeMetrics = require('./models/cafeMetrics');
 const subscriptionService = require('./services/subscriptionService');
+const featureService = require('./services/featureService');
+const auditService = require('./services/auditService');
+const Feature = require('./models/feature');
 const { auth, adminAuth, chefAuth, JWT_SECRET } = require('./middleware/auth');
 const { validateCafeAccess, requireSuperAdmin } = require('./middleware/cafeAuth');
 const { requireModule, requireActiveSubscription } = require('./middleware/subscriptionAuth');
@@ -956,13 +959,12 @@ app.get('/api/superadmin/cafes/:id/subscription', auth, requireSuperAdmin, async
 app.put('/api/superadmin/cafes/:id/subscription', auth, requireSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { plan, status, enabled_modules } = req.body;
+    const { plan, status } = req.body;
     
     const updatedCafe = await subscriptionService.updateCafeSubscription(id, {
       plan,
-      status,
-      enabledModules: enabled_modules
-    });
+      status
+    }, req.user.id);
     
     res.json({
       message: 'Subscription updated successfully',
@@ -974,7 +976,127 @@ app.put('/api/superadmin/cafes/:id/subscription', auth, requireSuperAdmin, async
   }
 });
 
-// Toggle a specific module for a cafe (Super Admin override)
+// Get feature resolution details for a cafe (Super Admin)
+app.get('/api/superadmin/cafes/:id/features', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const details = await featureService.getFeatureResolutionDetails(id);
+    
+    res.json(details);
+  } catch (error) {
+    console.error('Error fetching feature details:', error);
+    res.status(500).json({ error: 'Failed to fetch feature details' });
+  }
+});
+
+// Toggle a feature for a cafe (Super Admin override)
+app.post('/api/superadmin/cafes/:id/features/:featureKey/toggle', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id, featureKey } = req.params;
+    const { enabled } = req.body;
+    
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
+    
+    // Get previous state for audit
+    const previousEnabled = await featureService.cafeHasFeature(id, featureKey);
+    
+    // Toggle feature
+    const features = await featureService.toggleCafeFeature(id, featureKey, enabled);
+    
+    // Log audit event
+    await auditService.logAuditEvent(
+      id,
+      enabled ? auditService.ACTION_TYPES.FEATURE_ENABLED : auditService.ACTION_TYPES.FEATURE_DISABLED,
+      previousEnabled ? 'enabled' : 'disabled',
+      enabled ? 'enabled' : 'disabled',
+      req.user.id
+    );
+    
+    res.json({
+      message: `Feature ${featureKey} ${enabled ? 'enabled' : 'disabled'} successfully`,
+      features
+    });
+  } catch (error) {
+    console.error('Error toggling feature:', error);
+    res.status(500).json({ error: error.message || 'Failed to toggle feature' });
+  }
+});
+
+// Remove feature override (revert to plan default)
+app.delete('/api/superadmin/cafes/:id/features/:featureKey', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id, featureKey } = req.params;
+    
+    // Get previous state for audit
+    const previousEnabled = await featureService.cafeHasFeature(id, featureKey);
+    
+    // Remove override
+    const features = await featureService.removeFeatureOverride(id, featureKey);
+    
+    // Log audit event
+    await auditService.logAuditEvent(
+      id,
+      auditService.ACTION_TYPES.FEATURE_DISABLED,
+      previousEnabled ? 'enabled' : 'disabled',
+      'reverted to plan default',
+      req.user.id
+    );
+    
+    res.json({
+      message: `Feature override removed, reverted to plan default`,
+      features
+    });
+  } catch (error) {
+    console.error('Error removing feature override:', error);
+    res.status(500).json({ error: error.message || 'Failed to remove feature override' });
+  }
+});
+
+// Get audit log for a cafe (Super Admin)
+app.get('/api/superadmin/cafes/:id/audit-log', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseInt(req.query.offset) || 0;
+    
+    const auditLog = await auditService.getCafeAuditLog(id, limit, offset);
+    
+    res.json({
+      auditLog,
+      limit,
+      offset
+    });
+  } catch (error) {
+    console.error('Error fetching audit log:', error);
+    res.status(500).json({ error: 'Failed to fetch audit log' });
+  }
+});
+
+// Get all audit logs (Super Admin)
+app.get('/api/superadmin/audit-logs', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseInt(req.query.offset) || 0;
+    const cafeId = req.query.cafe_id ? parseInt(req.query.cafe_id) : null;
+    
+    const auditLogs = await auditService.getAllAuditLogs(limit, offset, cafeId);
+    
+    res.json({
+      auditLogs,
+      limit,
+      offset
+    });
+  } catch (error) {
+    console.error('Error fetching audit logs:', error);
+    res.status(500).json({ error: 'Failed to fetch audit logs' });
+  }
+});
+
+// DEPRECATED: Toggle a specific module for a cafe (Super Admin override)
+// Kept for backward compatibility
 app.post('/api/superadmin/cafes/:id/subscription/modules/:module/toggle', auth, requireSuperAdmin, async (req, res) => {
   try {
     const { id, module } = req.params;
@@ -984,11 +1106,24 @@ app.post('/api/superadmin/cafes/:id/subscription/modules/:module/toggle', auth, 
       return res.status(400).json({ error: 'enabled must be a boolean' });
     }
     
-    const updatedCafe = await subscriptionService.toggleCafeModule(id, module, enabled);
+    // Get previous state for audit
+    const previousEnabled = await featureService.cafeHasFeature(id, module);
+    
+    // Toggle feature using new service
+    const features = await featureService.toggleCafeFeature(id, module, enabled);
+    
+    // Log audit event
+    await auditService.logAuditEvent(
+      id,
+      enabled ? auditService.ACTION_TYPES.FEATURE_ENABLED : auditService.ACTION_TYPES.FEATURE_DISABLED,
+      previousEnabled ? 'enabled' : 'disabled',
+      enabled ? 'enabled' : 'disabled',
+      req.user.id
+    );
     
     res.json({
       message: `Module ${module} ${enabled ? 'enabled' : 'disabled'} successfully`,
-      cafe: updatedCafe
+      features
     });
   } catch (error) {
     console.error('Error toggling module:', error);
@@ -1013,24 +1148,37 @@ app.get('/api/subscription', auth, async (req, res) => {
       return res.status(404).json({ error: 'Cafe not found' });
     }
     
-    // Get available plans and modules (for display purposes)
-    const plans = subscriptionService.getAllPlans();
-    const modules = subscriptionService.getAllModules();
-    const planFeatures = {};
-    
-    plans.forEach(plan => {
-      planFeatures[plan] = subscriptionService.getPlanFeatures(plan);
-    });
+    // Get resolved features
+    const features = await featureService.resolveCafeFeatures(req.user.cafe_id);
     
     res.json({
       subscription,
-      available_plans: plans,
-      available_modules: modules,
-      plan_features: planFeatures
+      features
     });
   } catch (error) {
     console.error('Error fetching subscription:', error);
     res.status(500).json({ error: 'Failed to fetch subscription' });
+  }
+});
+
+// Get cafe features (single source of truth)
+app.get('/api/cafe/features', auth, async (req, res) => {
+  try {
+    if (!req.user || !req.user.cafe_id) {
+      return res.status(400).json({ error: 'User must belong to a cafe' });
+    }
+
+    const features = await featureService.resolveCafeFeatures(req.user.cafe_id);
+    const subscription = await subscriptionService.getCafeSubscription(req.user.cafe_id);
+    
+    res.json({
+      features,
+      plan: subscription?.plan || 'FREE',
+      status: subscription?.status || 'active'
+    });
+  } catch (error) {
+    console.error('Error fetching cafe features:', error);
+    res.status(500).json({ error: 'Failed to fetch cafe features' });
   }
 });
 

@@ -1,4 +1,6 @@
 const Cafe = require('../models/cafe');
+const featureService = require('./featureService');
+const auditService = require('./auditService');
 
 /**
  * Subscription Service
@@ -170,9 +172,15 @@ async function cafeHasModuleAccess(cafeId, module) {
 /**
  * Update cafe subscription
  */
-async function updateCafeSubscription(cafeId, subscriptionData) {
+async function updateCafeSubscription(cafeId, subscriptionData, changedBy = null) {
   try {
-    const { plan, status, enabledModules } = subscriptionData;
+    const { plan, status } = subscriptionData;
+    
+    // Get current subscription for audit
+    const currentCafe = await Cafe.getById(cafeId);
+    if (!currentCafe) {
+      throw new Error('Cafe not found');
+    }
     
     const updateData = {};
     
@@ -180,6 +188,18 @@ async function updateCafeSubscription(cafeId, subscriptionData) {
       if (!getAllPlans().includes(plan)) {
         throw new Error(`Invalid subscription plan: ${plan}`);
       }
+      
+      // Log plan change
+      if (currentCafe.subscription_plan !== plan) {
+        await auditService.logAuditEvent(
+          cafeId,
+          auditService.ACTION_TYPES.PLAN_CHANGED,
+          currentCafe.subscription_plan || 'FREE',
+          plan,
+          changedBy
+        );
+      }
+      
       updateData.subscription_plan = plan;
     }
     
@@ -187,11 +207,23 @@ async function updateCafeSubscription(cafeId, subscriptionData) {
       if (!getAllStatuses().includes(status)) {
         throw new Error(`Invalid subscription status: ${status}`);
       }
+      
+      // Log activation/deactivation
+      if (currentCafe.subscription_status !== status) {
+        const actionType = status === 'active' 
+          ? auditService.ACTION_TYPES.CAFE_ACTIVATED
+          : auditService.ACTION_TYPES.CAFE_DEACTIVATED;
+        
+        await auditService.logAuditEvent(
+          cafeId,
+          actionType,
+          currentCafe.subscription_status || 'inactive',
+          status,
+          changedBy
+        );
+      }
+      
       updateData.subscription_status = status;
-    }
-    
-    if (enabledModules !== undefined) {
-      updateData.enabled_modules = JSON.stringify(enabledModules);
     }
     
     if (Object.keys(updateData).length === 0) {
@@ -206,23 +238,25 @@ async function updateCafeSubscription(cafeId, subscriptionData) {
 
 /**
  * Toggle a specific module for a cafe (Super Admin override)
+ * DEPRECATED: Use featureService.toggleCafeFeature instead
  */
 async function toggleCafeModule(cafeId, module, enabled) {
   try {
-    const subscription = await getCafeSubscription(cafeId);
+    // Use new feature service
+    const previousValue = await featureService.cafeHasFeature(cafeId, module);
     
-    if (!subscription) {
-      throw new Error('Cafe not found');
-    }
+    await featureService.toggleCafeFeature(cafeId, module, enabled);
     
-    let enabledModules = subscription.enabledModules || {};
-    if (typeof enabledModules !== 'object') {
-      enabledModules = {};
-    }
+    // Log feature change
+    await auditService.logAuditEvent(
+      cafeId,
+      enabled ? auditService.ACTION_TYPES.FEATURE_ENABLED : auditService.ACTION_TYPES.FEATURE_DISABLED,
+      previousValue ? 'enabled' : 'disabled',
+      enabled ? 'enabled' : 'disabled',
+      null // changedBy will be set by API endpoint
+    );
     
-    enabledModules[module] = enabled === true;
-    
-    return await updateCafeSubscription(cafeId, { enabledModules });
+    return await featureService.resolveCafeFeatures(cafeId);
   } catch (error) {
     throw new Error(`Error toggling cafe module: ${error.message}`);
   }

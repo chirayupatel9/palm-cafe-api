@@ -1,4 +1,5 @@
 const subscriptionService = require('../services/subscriptionService');
+const featureService = require('../services/featureService');
 const Cafe = require('../models/cafe');
 
 /**
@@ -53,11 +54,11 @@ const requireActiveSubscription = async (req, res, next) => {
 };
 
 /**
- * Require that the cafe has access to a specific module
+ * Require that the cafe has access to a specific feature
  * 
- * @param {string} module - The module name to check
+ * @param {string} featureKey - The feature key to check
  */
-const requireModule = (module) => {
+const requireFeature = (featureKey) => {
   return async (req, res, next) => {
     try {
       const cafeId = req.cafeId || req.user?.cafe_id;
@@ -74,17 +75,16 @@ const requireModule = (module) => {
         return next();
       }
 
-      const hasAccess = await subscriptionService.cafeHasModuleAccess(cafeId, module);
+      const hasAccess = await featureService.cafeHasFeature(cafeId, featureKey);
       
       if (!hasAccess) {
         const subscription = await subscriptionService.getCafeSubscription(cafeId);
         const plan = subscription?.plan || 'FREE';
         
         return res.status(403).json({ 
-          error: `This feature requires a PRO subscription. Your current plan: ${plan}`,
-          code: 'MODULE_ACCESS_DENIED',
-          module: module,
-          required_plan: 'PRO',
+          error: `This feature is not available on your current plan (${plan}). Please upgrade to access this feature.`,
+          code: 'FEATURE_ACCESS_DENIED',
+          feature: featureKey,
           current_plan: plan
         });
       }
@@ -93,13 +93,24 @@ const requireModule = (module) => {
       req.subscription = await subscriptionService.getCafeSubscription(cafeId);
       next();
     } catch (error) {
-      console.error('Module access check error:', error);
+      console.error('Feature access check error:', error);
       return res.status(500).json({ 
-        error: 'Failed to verify module access',
-        code: 'MODULE_CHECK_FAILED'
+        error: 'Failed to verify feature access',
+        code: 'FEATURE_CHECK_FAILED'
       });
     }
   };
+};
+
+/**
+ * Require that the cafe has access to a specific module
+ * DEPRECATED: Use requireFeature instead
+ * 
+ * @param {string} module - The module name to check
+ */
+const requireModule = (module) => {
+  // Map old module names to feature keys
+  return requireFeature(module);
 };
 
 /**
@@ -125,6 +136,7 @@ const attachSubscriptionInfo = async (req, res, next) => {
 
 module.exports = {
   requireActiveSubscription,
-  requireModule,
+  requireFeature,
+  requireModule, // Deprecated, use requireFeature
   attachSubscriptionInfo
 };
