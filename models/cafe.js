@@ -6,10 +6,27 @@ const { pool } = require('../config/database');
  */
 class Cafe {
   /**
+   * Check if onboarding columns exist in the database
+   */
+  static async hasOnboardingColumns() {
+    try {
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'cafes' 
+        AND COLUMN_NAME IN ('is_onboarded', 'onboarding_data')
+      `);
+      return columns.length === 2;
+    } catch (error) {
+      return false;
+    }
+  }
+  /**
    * Create a new cafe
    */
   static async create(cafeData) {
-    const { slug, name, description, logo_url, address, phone, email, website, subscription_plan, subscription_status, enabled_modules } = cafeData;
+    const { slug, name, description, logo_url, address, phone, email, website, subscription_plan, subscription_status, enabled_modules, is_onboarded, onboarding_data } = cafeData;
     
     if (!slug || !name) {
       throw new Error('Slug and name are required');
@@ -21,22 +38,38 @@ class Cafe {
     }
 
     try {
+      // Check if onboarding columns exist
+      const hasOnboardingColumns = await this.hasOnboardingColumns();
+      
+      // New cafes default to NOT onboarded unless explicitly set
+      const onboarded = is_onboarded !== undefined ? is_onboarded : false;
+      const onboardingDataJson = onboarding_data ? JSON.stringify(onboarding_data) : null;
+
+      let insertFields = 'slug, name, description, logo_url, address, phone, email, website, is_active, subscription_plan, subscription_status, enabled_modules';
+      let insertValues = [
+        slug.toLowerCase(), 
+        name, 
+        description || null, 
+        logo_url || null, 
+        address || null, 
+        phone || null, 
+        email || null, 
+        website || null,
+        subscription_plan || 'FREE',
+        subscription_status || 'active',
+        enabled_modules ? JSON.stringify(enabled_modules) : null
+      ];
+
+      // Add onboarding columns if they exist
+      if (hasOnboardingColumns) {
+        insertFields += ', is_onboarded, onboarding_data';
+        insertValues.push(onboarded, onboardingDataJson);
+      }
+
       const [result] = await pool.execute(
-        `INSERT INTO cafes (slug, name, description, logo_url, address, phone, email, website, is_active, subscription_plan, subscription_status, enabled_modules)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?, ?)`,
-        [
-          slug.toLowerCase(), 
-          name, 
-          description || null, 
-          logo_url || null, 
-          address || null, 
-          phone || null, 
-          email || null, 
-          website || null,
-          subscription_plan || 'FREE',
-          subscription_status || 'active',
-          enabled_modules ? JSON.stringify(enabled_modules) : null
-        ]
+        `INSERT INTO cafes (${insertFields})
+         VALUES (${insertValues.map(() => '?').join(', ')})`,
+        insertValues
       );
 
       return await this.getById(result.insertId);
@@ -72,6 +105,24 @@ class Cafe {
         }
       }
 
+      // Parse onboarding_data JSON if present (only if column exists)
+      const hasOnboardingColumns = await this.hasOnboardingColumns();
+      if (hasOnboardingColumns) {
+        if (cafe.onboarding_data) {
+          try {
+            cafe.onboarding_data = JSON.parse(cafe.onboarding_data);
+          } catch (e) {
+            cafe.onboarding_data = null;
+          }
+        }
+        // Ensure is_onboarded is a boolean
+        cafe.is_onboarded = Boolean(cafe.is_onboarded);
+      } else {
+        // Default values if columns don't exist
+        cafe.is_onboarded = true; // Grandfather existing cafes
+        cafe.onboarding_data = null;
+      }
+
       return cafe;
     } catch (error) {
       throw new Error(`Error fetching cafe: ${error.message}`);
@@ -92,7 +143,35 @@ class Cafe {
         return null;
       }
 
-      return rows[0];
+      const cafe = rows[0];
+      // Parse enabled_modules JSON if present
+      if (cafe.enabled_modules) {
+        try {
+          cafe.enabled_modules = JSON.parse(cafe.enabled_modules);
+        } catch (e) {
+          cafe.enabled_modules = null;
+        }
+      }
+
+      // Parse onboarding_data JSON if present (only if column exists)
+      const hasOnboardingColumns = await this.hasOnboardingColumns();
+      if (hasOnboardingColumns) {
+        if (cafe.onboarding_data) {
+          try {
+            cafe.onboarding_data = JSON.parse(cafe.onboarding_data);
+          } catch (e) {
+            cafe.onboarding_data = null;
+          }
+        }
+        // Ensure is_onboarded is a boolean
+        cafe.is_onboarded = Boolean(cafe.is_onboarded);
+      } else {
+        // Default values if columns don't exist
+        cafe.is_onboarded = true; // Grandfather existing cafes
+        cafe.onboarding_data = null;
+      }
+
+      return cafe;
     } catch (error) {
       throw new Error(`Error fetching cafe by slug: ${error.message}`);
     }
@@ -136,7 +215,7 @@ class Cafe {
    * Update cafe
    */
   static async update(id, cafeData) {
-    const { slug, name, description, logo_url, address, phone, email, website, is_active, subscription_plan, subscription_status, enabled_modules } = cafeData;
+    const { slug, name, description, logo_url, address, phone, email, website, is_active, subscription_plan, subscription_status, enabled_modules, is_onboarded, onboarding_data } = cafeData;
 
     try {
       const updateFields = [];
@@ -203,6 +282,25 @@ class Cafe {
       if (enabled_modules !== undefined) {
         updateFields.push('enabled_modules = ?');
         updateValues.push(enabled_modules ? JSON.stringify(enabled_modules) : null);
+      }
+
+      // Check if onboarding columns exist before trying to update them
+      const hasOnboardingColumns = await this.hasOnboardingColumns();
+      
+      if (is_onboarded !== undefined) {
+        if (!hasOnboardingColumns) {
+          throw new Error('Onboarding columns not found. Please run migration: node migrations/migration-023-add-cafe-onboarding.js');
+        }
+        updateFields.push('is_onboarded = ?');
+        updateValues.push(Boolean(is_onboarded));
+      }
+
+      if (onboarding_data !== undefined) {
+        if (!hasOnboardingColumns) {
+          throw new Error('Onboarding columns not found. Please run migration: node migrations/migration-023-add-cafe-onboarding.js');
+        }
+        updateFields.push('onboarding_data = ?');
+        updateValues.push(onboarding_data ? JSON.stringify(onboarding_data) : null);
       }
 
       if (updateFields.length === 0) {

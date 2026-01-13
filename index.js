@@ -30,6 +30,7 @@ const Feature = require('./models/feature');
 const { auth, adminAuth, chefAuth, JWT_SECRET } = require('./middleware/auth');
 const { validateCafeAccess, requireSuperAdmin } = require('./middleware/cafeAuth');
 const { requireModule, requireActiveSubscription } = require('./middleware/subscriptionAuth');
+const { requireOnboarding, allowOnboardingRoutes } = require('./middleware/onboardingAuth');
 const logger = require('./config/logger');
 const { generalLimiter, authLimiter, uploadLimiter, apiLimiter } = require('./middleware/rateLimiter');
 const PaymentMethod = require('./models/paymentMethod');
@@ -1179,6 +1180,195 @@ app.get('/api/cafe/features', auth, async (req, res) => {
   } catch (error) {
     console.error('Error fetching cafe features:', error);
     res.status(500).json({ error: 'Failed to fetch cafe features' });
+  }
+});
+
+// ========================
+// Onboarding Routes
+// ========================
+
+// Get onboarding status (for authenticated cafe users)
+app.get('/api/onboarding/status', auth, allowOnboardingRoutes, async (req, res) => {
+  try {
+    if (!req.user || !req.user.cafe_id) {
+      return res.status(400).json({ error: 'User must belong to a cafe' });
+    }
+
+    // Super Admin doesn't need onboarding
+    if (req.user.role === 'superadmin') {
+      return res.json({
+        is_onboarded: true,
+        onboarding_data: null,
+        requires_onboarding: false
+      });
+    }
+
+    const cafe = await Cafe.getById(req.user.cafe_id);
+    
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+
+    // Check if onboarding columns exist
+    const hasOnboardingColumns = await Cafe.hasOnboardingColumns();
+    
+    if (!hasOnboardingColumns) {
+      // If columns don't exist, assume cafe is onboarded (grandfathered)
+      return res.json({
+        is_onboarded: true,
+        onboarding_data: {},
+        requires_onboarding: false,
+        migration_required: true
+      });
+    }
+
+    res.json({
+      is_onboarded: Boolean(cafe.is_onboarded),
+      onboarding_data: cafe.onboarding_data || {},
+      requires_onboarding: !cafe.is_onboarded
+    });
+  } catch (error) {
+    console.error('Error fetching onboarding status:', error);
+    res.status(500).json({ error: 'Failed to fetch onboarding status' });
+  }
+});
+
+// Update onboarding step data (save progress)
+app.put('/api/onboarding/step', auth, allowOnboardingRoutes, async (req, res) => {
+  try {
+    if (!req.user || !req.user.cafe_id) {
+      return res.status(400).json({ error: 'User must belong to a cafe' });
+    }
+
+    // Super Admin cannot update onboarding
+    if (req.user.role === 'superadmin') {
+      return res.status(403).json({ error: 'Super Admin does not require onboarding' });
+    }
+
+    const { step, data } = req.body;
+
+    if (!step || typeof step !== 'string') {
+      return res.status(400).json({ error: 'Step name is required' });
+    }
+
+    const cafe = await Cafe.getById(req.user.cafe_id);
+    
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+
+    // Merge new step data with existing onboarding data
+    const existingData = cafe.onboarding_data || {};
+    const updatedData = {
+      ...existingData,
+      [step]: data,
+      last_updated_step: step,
+      last_updated_at: new Date().toISOString()
+    };
+
+    // Update cafe with new onboarding data
+    await Cafe.update(req.user.cafe_id, {
+      onboarding_data: updatedData
+    });
+
+    res.json({
+      message: 'Onboarding step saved successfully',
+      onboarding_data: updatedData
+    });
+  } catch (error) {
+    console.error('Error updating onboarding step:', error);
+    
+    // Check if it's a migration issue
+    if (error.message && error.message.includes('Onboarding columns not found')) {
+      return res.status(500).json({ 
+        error: 'Database migration required',
+        message: 'Please run: node migrations/migration-023-add-cafe-onboarding.js',
+        code: 'MIGRATION_REQUIRED'
+      });
+    }
+    
+    res.status(500).json({ error: 'Failed to update onboarding step' });
+  }
+});
+
+// Complete onboarding
+app.post('/api/onboarding/complete', auth, allowOnboardingRoutes, async (req, res) => {
+  try {
+    if (!req.user || !req.user.cafe_id) {
+      return res.status(400).json({ error: 'User must belong to a cafe' });
+    }
+
+    // Super Admin cannot complete onboarding
+    if (req.user.role === 'superadmin') {
+      return res.status(403).json({ error: 'Super Admin does not require onboarding' });
+    }
+
+    // Verify user belongs to the cafe
+    const cafe = await Cafe.getById(req.user.cafe_id);
+    
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+
+    // Validate that user belongs to this cafe
+    if (req.user.cafe_id !== cafe.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Mark onboarding as complete
+    await Cafe.update(req.user.cafe_id, {
+      is_onboarded: true,
+      onboarding_data: {
+        ...(cafe.onboarding_data || {}),
+        completed_at: new Date().toISOString(),
+        completed_by: req.user.id
+      }
+    });
+
+    res.json({
+      message: 'Onboarding completed successfully',
+      is_onboarded: true
+    });
+  } catch (error) {
+    console.error('Error completing onboarding:', error);
+    
+    // Check if it's a migration issue
+    if (error.message && error.message.includes('Onboarding columns not found')) {
+      return res.status(500).json({ 
+        error: 'Database migration required',
+        message: 'Please run: node migrations/migration-023-add-cafe-onboarding.js',
+        code: 'MIGRATION_REQUIRED'
+      });
+    }
+    
+    res.status(500).json({ error: 'Failed to complete onboarding' });
+  }
+});
+
+// Reset onboarding (Super Admin only)
+app.post('/api/superadmin/cafes/:id/reset-onboarding', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const cafe = await Cafe.getById(id);
+    
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+
+    // Reset onboarding status
+    await Cafe.update(id, {
+      is_onboarded: false,
+      onboarding_data: null
+    });
+
+    res.json({
+      message: 'Onboarding reset successfully',
+      cafe: await Cafe.getById(id)
+    });
+  } catch (error) {
+    console.error('Error resetting onboarding:', error);
+    res.status(500).json({ error: 'Failed to reset onboarding' });
   }
 });
 
