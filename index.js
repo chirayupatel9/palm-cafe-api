@@ -1185,8 +1185,23 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 // Get current user profile
 app.get('/api/auth/profile', auth, async (req, res) => {
   try {
+    // Get user with cafe information
+    const user = await User.findByIdWithCafe(req.user.id);
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
     res.json({
-      user: { id: req.user.id, username: req.user.username, email: req.user.email, role: req.user.role }
+      user: { 
+        id: user.id, 
+        username: user.username, 
+        email: user.email, 
+        role: user.role,
+        cafe_id: user.cafe_id,
+        cafe_slug: user.cafe_slug,
+        cafe_name: user.cafe_name
+      }
     });
   } catch (error) {
     console.error('Profile error:', error);
