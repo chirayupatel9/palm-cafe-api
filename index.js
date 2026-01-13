@@ -1928,6 +1928,24 @@ app.post('/api/invoices', auth, async (req, res) => {
       }
     }
 
+    // Get cafe_id from order, user, or default cafe
+    let cafeId = null;
+    if (createdOrder && createdOrder.cafe_id) {
+      cafeId = createdOrder.cafe_id;
+    } else if (req.user && req.user.cafe_id) {
+      cafeId = req.user.cafe_id;
+    } else {
+      // Try to get default cafe
+      try {
+        const defaultCafe = await Cafe.getBySlug('default');
+        if (defaultCafe) {
+          cafeId = defaultCafe.id;
+        }
+      } catch (error) {
+        // Cafe table might not exist yet, ignore
+      }
+    }
+
     const invoiceData = {
       invoiceNumber,
       order_id: createdOrder.id,
@@ -1942,7 +1960,8 @@ app.post('/api/invoices', auth, async (req, res) => {
       taxAmount: taxCalculation.taxAmount,
       tipAmount: tipAmountNum,
       total,
-      date: date || new Date().toISOString()
+      date: date || new Date().toISOString(),
+      cafe_id: cafeId
     };
 
     const createdInvoice = await Invoice.create(invoiceData);
@@ -2569,7 +2588,7 @@ app.patch('/api/orders/:id/status', auth, async (req, res) => {
     
     // Broadcast order update via WebSocket
     if (global.wsManager) {
-      global.wsManager.broadcastOrderUpdate(updatedOrder);
+      global.wsManager.broadcastOrderStatusUpdate(updatedOrder);
     }
     
     // Award loyalty points when order is completed (only if not already awarded)
@@ -2624,7 +2643,7 @@ app.put('/api/orders/:id', auth, async (req, res) => {
     
     // Broadcast order update via WebSocket
     if (global.wsManager) {
-      global.wsManager.broadcastOrderUpdate(updatedOrder);
+      global.wsManager.broadcastOrderStatusUpdate(updatedOrder);
     }
     
     res.json(updatedOrder);

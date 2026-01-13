@@ -55,8 +55,8 @@ class WebSocketManager {
     this.broadcastOrderUpdate('order_created', { order });
   }
   
-  // Broadcast order update
-  broadcastOrderUpdate(order) {
+  // Broadcast order status update (convenience method)
+  broadcastOrderStatusUpdate(order) {
     this.broadcastOrderUpdate('order_updated', { order });
   }
   

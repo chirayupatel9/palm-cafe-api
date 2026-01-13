@@ -1,27 +1,104 @@
 const { pool } = require('../config/database');
 
 class Invoice {
-  // Get all invoices with items
-  static async getAll() {
+  // Get all invoices with items (optionally filtered by cafeId)
+  static async getAll(cafeId = null) {
     try {
-      const [invoices] = await pool.execute(`
-        SELECT 
-          i.invoice_number,
-          i.order_id,
-          i.customer_name,
-          i.customer_phone,
-          i.payment_method,
-          i.subtotal,
-          i.tax_amount,
-          i.tip_amount,
-          i.total_amount,
-          i.invoice_date,
-          i.created_at,
-          o.order_number
-        FROM invoices i
-        LEFT JOIN orders o ON i.order_id = o.id
-        ORDER BY i.invoice_date DESC
+      // Check which columns exist
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'invoices'
       `);
+      
+      const existingColumns = columns.map(col => col.COLUMN_NAME);
+      const hasOrderId = existingColumns.includes('order_id');
+      const hasCafeId = existingColumns.includes('cafe_id');
+      const hasSubtotal = existingColumns.includes('subtotal');
+      const hasTaxAmount = existingColumns.includes('tax_amount');
+      const hasTipAmount = existingColumns.includes('tip_amount');
+      const hasPaymentMethod = existingColumns.includes('payment_method');
+      const hasInvoiceDate = existingColumns.includes('invoice_date');
+      const hasTotalAmount = existingColumns.includes('total_amount');
+      const hasTotal = existingColumns.includes('total');
+
+      // Build SELECT query dynamically
+      const selectFields = ['i.invoice_number'];
+      
+      if (hasOrderId) {
+        selectFields.push('i.order_id');
+      }
+      
+      if (hasCafeId) {
+        selectFields.push('i.cafe_id');
+      }
+      
+      selectFields.push('i.customer_name');
+      
+      if (existingColumns.includes('customer_phone')) {
+        selectFields.push('i.customer_phone');
+      }
+      
+      if (hasPaymentMethod) {
+        selectFields.push('i.payment_method');
+      }
+      
+      if (hasSubtotal) {
+        selectFields.push('i.subtotal');
+      }
+      
+      if (hasTaxAmount) {
+        selectFields.push('i.tax_amount');
+      }
+      
+      if (hasTipAmount) {
+        selectFields.push('i.tip_amount');
+      }
+      
+      if (hasTotalAmount) {
+        selectFields.push('i.total_amount');
+      } else if (hasTotal) {
+        selectFields.push('i.total as total_amount');
+      }
+      
+      if (hasInvoiceDate) {
+        selectFields.push('i.invoice_date');
+      } else if (existingColumns.includes('date')) {
+        selectFields.push('i.date as invoice_date');
+      }
+      
+      selectFields.push('i.created_at');
+      
+      if (hasOrderId) {
+        selectFields.push('o.order_number');
+      }
+
+      let query = `
+        SELECT ${selectFields.join(', ')}
+        FROM invoices i
+      `;
+      
+      const params = [];
+      
+      if (hasOrderId) {
+        query += ' LEFT JOIN orders o ON i.order_id = o.id';
+      }
+      
+      if (hasCafeId && cafeId) {
+        query += ' WHERE i.cafe_id = ?';
+        params.push(cafeId);
+      }
+      
+      if (hasInvoiceDate) {
+        query += ' ORDER BY i.invoice_date DESC';
+      } else if (existingColumns.includes('date')) {
+        query += ' ORDER BY i.date DESC';
+      } else {
+        query += ' ORDER BY i.created_at DESC';
+      }
+
+      const [invoices] = await pool.execute(query, params);
 
       // Get items for each invoice
       const invoicesWithItems = await Promise.all(
@@ -39,10 +116,10 @@ class Invoice {
 
           return {
             ...invoice,
-            subtotal: parseFloat(invoice.subtotal),
-            tax_amount: parseFloat(invoice.tax_amount),
-            tip_amount: parseFloat(invoice.tip_amount),
-            total_amount: parseFloat(invoice.total_amount),
+            subtotal: invoice.subtotal ? parseFloat(invoice.subtotal) : 0,
+            tax_amount: invoice.tax_amount ? parseFloat(invoice.tax_amount) : 0,
+            tip_amount: invoice.tip_amount ? parseFloat(invoice.tip_amount) : 0,
+            total_amount: invoice.total_amount ? parseFloat(invoice.total_amount) : (invoice.total ? parseFloat(invoice.total) : 0),
             items: items.map(item => ({
               ...item,
               price: parseFloat(item.price),
@@ -61,24 +138,82 @@ class Invoice {
   // Get invoice by number
   static async getByNumber(invoiceNumber) {
     try {
-      const [invoices] = await pool.execute(`
-        SELECT 
-          i.invoice_number,
-          i.order_id,
-          i.customer_name,
-          i.customer_phone,
-          i.payment_method,
-          i.subtotal,
-          i.tax_amount,
-          i.tip_amount,
-          i.total_amount,
-          i.invoice_date,
-          i.created_at,
-          o.order_number
+      // Check which columns exist
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'invoices'
+      `);
+      
+      const existingColumns = columns.map(col => col.COLUMN_NAME);
+      const hasOrderId = existingColumns.includes('order_id');
+      const hasSubtotal = existingColumns.includes('subtotal');
+      const hasTaxAmount = existingColumns.includes('tax_amount');
+      const hasTipAmount = existingColumns.includes('tip_amount');
+      const hasPaymentMethod = existingColumns.includes('payment_method');
+      const hasInvoiceDate = existingColumns.includes('invoice_date');
+      const hasTotalAmount = existingColumns.includes('total_amount');
+      const hasTotal = existingColumns.includes('total');
+
+      const selectFields = ['i.invoice_number'];
+      
+      if (hasOrderId) {
+        selectFields.push('i.order_id');
+      }
+      
+      selectFields.push('i.customer_name');
+      
+      if (existingColumns.includes('customer_phone')) {
+        selectFields.push('i.customer_phone');
+      }
+      
+      if (hasPaymentMethod) {
+        selectFields.push('i.payment_method');
+      }
+      
+      if (hasSubtotal) {
+        selectFields.push('i.subtotal');
+      }
+      
+      if (hasTaxAmount) {
+        selectFields.push('i.tax_amount');
+      }
+      
+      if (hasTipAmount) {
+        selectFields.push('i.tip_amount');
+      }
+      
+      if (hasTotalAmount) {
+        selectFields.push('i.total_amount');
+      } else if (hasTotal) {
+        selectFields.push('i.total as total_amount');
+      }
+      
+      if (hasInvoiceDate) {
+        selectFields.push('i.invoice_date');
+      } else if (existingColumns.includes('date')) {
+        selectFields.push('i.date as invoice_date');
+      }
+      
+      selectFields.push('i.created_at');
+      
+      if (hasOrderId) {
+        selectFields.push('o.order_number');
+      }
+
+      let query = `
+        SELECT ${selectFields.join(', ')}
         FROM invoices i
-        LEFT JOIN orders o ON i.order_id = o.id
-        WHERE i.invoice_number = ?
-      `, [invoiceNumber]);
+      `;
+      
+      if (hasOrderId) {
+        query += ' LEFT JOIN orders o ON i.order_id = o.id';
+      }
+      
+      query += ' WHERE i.invoice_number = ?';
+
+      const [invoices] = await pool.execute(query, [invoiceNumber]);
 
       if (invoices.length === 0) {
         return null;
@@ -118,20 +253,76 @@ class Invoice {
   // Get invoice by order number
   static async getByOrderNumber(orderNumber) {
     try {
+      // Check if order_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'invoices'
+        AND COLUMN_NAME = 'order_id'
+      `);
+      
+      if (columns.length === 0) {
+        // order_id doesn't exist, can't query by order number
+        return null;
+      }
+
+      // Check which columns exist
+      const [allColumns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'invoices'
+      `);
+      
+      const existingColumns = allColumns.map(col => col.COLUMN_NAME);
+      const hasSubtotal = existingColumns.includes('subtotal');
+      const hasTaxAmount = existingColumns.includes('tax_amount');
+      const hasTipAmount = existingColumns.includes('tip_amount');
+      const hasPaymentMethod = existingColumns.includes('payment_method');
+      const hasInvoiceDate = existingColumns.includes('invoice_date');
+      const hasTotalAmount = existingColumns.includes('total_amount');
+      const hasTotal = existingColumns.includes('total');
+
+      const selectFields = ['i.invoice_number', 'i.order_id'];
+      selectFields.push('i.customer_name');
+      
+      if (existingColumns.includes('customer_phone')) {
+        selectFields.push('i.customer_phone');
+      }
+      
+      if (hasPaymentMethod) {
+        selectFields.push('i.payment_method');
+      }
+      
+      if (hasSubtotal) {
+        selectFields.push('i.subtotal');
+      }
+      
+      if (hasTaxAmount) {
+        selectFields.push('i.tax_amount');
+      }
+      
+      if (hasTipAmount) {
+        selectFields.push('i.tip_amount');
+      }
+      
+      if (hasTotalAmount) {
+        selectFields.push('i.total_amount');
+      } else if (hasTotal) {
+        selectFields.push('i.total as total_amount');
+      }
+      
+      if (hasInvoiceDate) {
+        selectFields.push('i.invoice_date');
+      } else if (existingColumns.includes('date')) {
+        selectFields.push('i.date as invoice_date');
+      }
+      
+      selectFields.push('i.created_at', 'o.order_number');
+
       const [invoices] = await pool.execute(`
-        SELECT 
-          i.invoice_number,
-          i.order_id,
-          i.customer_name,
-          i.customer_phone,
-          i.payment_method,
-          i.subtotal,
-          i.tax_amount,
-          i.tip_amount,
-          i.total_amount,
-          i.invoice_date,
-          i.created_at,
-          o.order_number
+        SELECT ${selectFields.join(', ')}
         FROM invoices i
         LEFT JOIN orders o ON i.order_id = o.id
         WHERE o.order_number = ?
@@ -178,16 +369,105 @@ class Invoice {
     try {
       await connection.beginTransaction();
 
-      const { invoiceNumber, order_id, customerName, customerPhone, paymentMethod, items, subtotal, taxAmount, tipAmount, total, date } = invoiceData;
+      const { invoiceNumber, order_id, customerName, customerPhone, paymentMethod, items, subtotal, taxAmount, tipAmount, total, date, cafe_id } = invoiceData;
 
       // Convert ISO datetime to MySQL datetime format
       const mysqlDate = new Date(date || new Date()).toISOString().slice(0, 19).replace('T', ' ');
 
+      // Check which columns exist in the invoices table
+      const [columns] = await connection.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'invoices'
+      `);
+      
+      const existingColumns = columns.map(col => col.COLUMN_NAME);
+      const hasOrderId = existingColumns.includes('order_id');
+      const hasCafeId = existingColumns.includes('cafe_id');
+      const hasSubtotal = existingColumns.includes('subtotal');
+      const hasTaxAmount = existingColumns.includes('tax_amount');
+      const hasTipAmount = existingColumns.includes('tip_amount');
+      const hasPaymentMethod = existingColumns.includes('payment_method');
+      const hasInvoiceDate = existingColumns.includes('invoice_date');
+
+      // Build dynamic INSERT query based on existing columns
+      const insertFields = ['invoice_number'];
+      const insertValues = [invoiceNumber];
+      const placeholders = ['?'];
+
+      if (hasOrderId) {
+        insertFields.push('order_id');
+        insertValues.push(order_id || null);
+        placeholders.push('?');
+      }
+
+      if (hasCafeId && cafe_id) {
+        insertFields.push('cafe_id');
+        insertValues.push(cafe_id);
+        placeholders.push('?');
+      }
+
+      insertFields.push('customer_name');
+      insertValues.push(customerName);
+      placeholders.push('?');
+
+      if (existingColumns.includes('customer_phone')) {
+        insertFields.push('customer_phone');
+        insertValues.push(customerPhone || null);
+        placeholders.push('?');
+      }
+
+      if (hasPaymentMethod) {
+        insertFields.push('payment_method');
+        insertValues.push(paymentMethod || 'cash');
+        placeholders.push('?');
+      }
+
+      if (hasSubtotal) {
+        insertFields.push('subtotal');
+        insertValues.push(subtotal || 0);
+        placeholders.push('?');
+      }
+
+      if (hasTaxAmount) {
+        insertFields.push('tax_amount');
+        insertValues.push(taxAmount || 0);
+        placeholders.push('?');
+      }
+
+      if (hasTipAmount) {
+        insertFields.push('tip_amount');
+        insertValues.push(tipAmount || 0);
+        placeholders.push('?');
+      }
+
+      // Use total_amount or total depending on what exists
+      if (existingColumns.includes('total_amount')) {
+        insertFields.push('total_amount');
+        insertValues.push(total);
+        placeholders.push('?');
+      } else if (existingColumns.includes('total')) {
+        insertFields.push('total');
+        insertValues.push(total);
+        placeholders.push('?');
+      }
+
+      if (hasInvoiceDate) {
+        insertFields.push('invoice_date');
+        insertValues.push(mysqlDate);
+        placeholders.push('?');
+      } else if (existingColumns.includes('date')) {
+        insertFields.push('date');
+        insertValues.push(mysqlDate);
+        placeholders.push('?');
+      }
+
       // Insert invoice
       await connection.execute(`
-        INSERT INTO invoices (invoice_number, order_id, customer_name, customer_phone, payment_method, subtotal, tax_amount, tip_amount, total_amount, invoice_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [invoiceNumber, order_id, customerName, customerPhone, paymentMethod, subtotal, taxAmount, tipAmount, total, mysqlDate]);
+        INSERT INTO invoices (${insertFields.join(', ')})
+        VALUES (${placeholders.join(', ')})
+      `, insertValues);
 
       // Insert invoice items
       for (const item of items) {
