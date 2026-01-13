@@ -81,11 +81,11 @@ app.use(cors({
       // Production origins
       'https://app.cafe.nevyaa.com',
       // Development origins (from environment variables)
-      process.env.FRONTEND_URL, 
-      'http://localhost:3000',
-      
-
-    ];
+      process.env.FRONTEND_URL,
+      process.env.ADMIN_URL,
+      // Fallback for development
+      ...(process.env.NODE_ENV === 'development' ? ['http://localhost:3000', 'http://localhost:3001'] : [])
+    ].filter(Boolean); // Remove null/undefined values
     
     // Check if origin is in allowed list
     if (allowedOrigins.indexOf(origin) !== -1) {
@@ -1505,7 +1505,7 @@ app.get('/api/cors-test', (req, res) => {
     method: req.method,
     timestamp: new Date().toISOString(),
     allowedOrigins: [
-      process.env.FRONTEND_URL || 'http://localhost:3000',
+      process.env.FRONTEND_URL,
       process.env.ADMIN_URL || 'http://localhost:3001',
       'https://palm-cafe-api-r6rx.vercel.app',
       'https://palm-cafe-ui.vercel.app',
