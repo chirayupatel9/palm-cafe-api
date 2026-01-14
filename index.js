@@ -23,6 +23,7 @@ const Order = require('./models/order');
 const Customer = require('./models/customer');
 const Cafe = require('./models/cafe');
 const CafeMetrics = require('./models/cafeMetrics');
+const CafeDailyMetrics = require('./models/cafeDailyMetrics');
 const subscriptionService = require('./services/subscriptionService');
 const featureService = require('./services/featureService');
 const auditService = require('./services/auditService');
@@ -1947,17 +1948,16 @@ app.get('/api/analytics/overview', auth, requireFeature('analytics'), async (req
     
     const cafeId = req.user.cafe_id;
     
-    // Check if cafe_id columns exist
-    const [ordersColumns] = await pool.execute(`
-      SELECT COLUMN_NAME 
-      FROM INFORMATION_SCHEMA.COLUMNS 
+    // Check if cafe_daily_metrics table exists
+    const [tableExists] = await pool.execute(`
+      SELECT TABLE_NAME 
+      FROM INFORMATION_SCHEMA.TABLES 
       WHERE TABLE_SCHEMA = DATABASE() 
-      AND TABLE_NAME = 'orders' 
-      AND COLUMN_NAME = 'cafe_id'
+      AND TABLE_NAME = 'cafe_daily_metrics'
     `);
     
-    if (ordersColumns.length === 0) {
-      // Return empty metrics if cafe_id column doesn't exist
+    if (tableExists.length === 0) {
+      // Return empty metrics if table doesn't exist yet
       return res.json({
         orders: {
           total: 0,
@@ -1977,40 +1977,12 @@ app.get('/api/analytics/overview', auth, requireFeature('analytics'), async (req
       });
     }
     
-    // Order metrics
-    const [totalOrders] = await pool.execute(
-      'SELECT COUNT(*) as count FROM orders WHERE cafe_id = ?',
-      [cafeId]
-    );
-    const [ordersToday] = await pool.execute(
-      'SELECT COUNT(*) as count FROM orders WHERE cafe_id = ? AND DATE(created_at) = CURDATE()',
-      [cafeId]
-    );
-    const [ordersThisMonth] = await pool.execute(
-      'SELECT COUNT(*) as count FROM orders WHERE cafe_id = ? AND MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())',
-      [cafeId]
-    );
+    // Get aggregated metrics from cafe_daily_metrics
+    const totals = await CafeDailyMetrics.getTotals(cafeId);
+    const today = await CafeDailyMetrics.getToday(cafeId);
+    const thisMonth = await CafeDailyMetrics.getThisMonth(cafeId);
     
-    // Revenue metrics (from completed orders)
-    const [totalRevenue] = await pool.execute(
-      'SELECT COALESCE(SUM(final_amount), 0) as total FROM orders WHERE cafe_id = ? AND status = "completed"',
-      [cafeId]
-    );
-    const [revenueToday] = await pool.execute(
-      'SELECT COALESCE(SUM(final_amount), 0) as total FROM orders WHERE cafe_id = ? AND status = "completed" AND DATE(created_at) = CURDATE()',
-      [cafeId]
-    );
-    const [revenueThisMonth] = await pool.execute(
-      `SELECT COALESCE(SUM(final_amount), 0) as total 
-       FROM orders 
-       WHERE cafe_id = ? 
-       AND status = "completed" 
-       AND MONTH(created_at) = MONTH(CURDATE()) 
-       AND YEAR(created_at) = YEAR(CURDATE())`,
-      [cafeId]
-    );
-    
-    // Customer metrics
+    // Customer metrics (still query raw data as it's not aggregated daily)
     const [customersColumns] = await pool.execute(`
       SELECT COLUMN_NAME 
       FROM INFORMATION_SCHEMA.COLUMNS 
@@ -2058,19 +2030,19 @@ app.get('/api/analytics/overview', auth, requireFeature('analytics'), async (req
     
     res.json({
       orders: {
-        total: totalOrders[0].count,
-        today: ordersToday[0].count,
-        this_month: ordersThisMonth[0].count
+        total: totals.total_orders,
+        today: today.total_orders,
+        this_month: thisMonth.total_orders
       },
       revenue: {
-        total: parseFloat(totalRevenue[0].total || 0),
-        today: parseFloat(revenueToday[0].total || 0),
-        this_month: parseFloat(revenueThisMonth[0].total || 0)
+        total: totals.total_revenue,
+        today: today.completed_revenue,
+        this_month: thisMonth.total_revenue
       },
       customers: customerMetrics
     });
   } catch (error) {
-    console.error('Error fetching analytics overview:', error);
+    logger.error('Error fetching analytics overview:', error);
     res.status(500).json({ error: 'Failed to fetch analytics overview' });
   }
 });
@@ -2091,45 +2063,39 @@ app.get('/api/analytics/trends', auth, requireFeature('analytics'), async (req, 
     const cafeId = req.user.cafe_id;
     const { days = 30 } = req.query; // Default to last 30 days
     
-    // Check if cafe_id columns exist
-    const [ordersColumns] = await pool.execute(`
-      SELECT COLUMN_NAME 
-      FROM INFORMATION_SCHEMA.COLUMNS 
+    // Check if cafe_daily_metrics table exists
+    const [tableExists] = await pool.execute(`
+      SELECT TABLE_NAME 
+      FROM INFORMATION_SCHEMA.TABLES 
       WHERE TABLE_SCHEMA = DATABASE() 
-      AND TABLE_NAME = 'orders' 
-      AND COLUMN_NAME = 'cafe_id'
+      AND TABLE_NAME = 'cafe_daily_metrics'
     `);
     
-    if (ordersColumns.length === 0) {
+    if (tableExists.length === 0) {
       return res.json({
         orders: [],
         revenue: []
       });
     }
     
-    // Get daily orders and revenue for the last N days
-    const [dailyData] = await pool.execute(
-      `SELECT 
-        DATE(created_at) as date,
-        COUNT(*) as order_count,
-        COALESCE(SUM(CASE WHEN status = 'completed' THEN final_amount ELSE 0 END), 0) as revenue
-       FROM orders
-       WHERE cafe_id = ? 
-       AND created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-       GROUP BY DATE(created_at)
-       ORDER BY date ASC`,
-      [cafeId, parseInt(days)]
-    );
+    // Calculate date range
+    const endDate = new Date().toISOString().split('T')[0];
+    const startDateObj = new Date();
+    startDateObj.setDate(startDateObj.getDate() - parseInt(days));
+    const startDate = startDateObj.toISOString().split('T')[0];
+    
+    // Get daily metrics from aggregated table
+    const dailyMetrics = await CafeDailyMetrics.getDateRange(cafeId, startDate, endDate);
     
     // Format for frontend
-    const orders = dailyData.map(row => ({
-      date: row.date.toISOString().split('T')[0],
-      count: row.order_count
+    const orders = dailyMetrics.map(metric => ({
+      date: metric.date,
+      count: metric.total_orders
     }));
     
-    const revenue = dailyData.map(row => ({
-      date: row.date.toISOString().split('T')[0],
-      amount: parseFloat(row.revenue || 0)
+    const revenue = dailyMetrics.map(metric => ({
+      date: metric.date,
+      amount: metric.completed_revenue
     }));
     
     res.json({
@@ -2137,7 +2103,7 @@ app.get('/api/analytics/trends', auth, requireFeature('analytics'), async (req, 
       revenue
     });
   } catch (error) {
-    console.error('Error fetching analytics trends:', error);
+    logger.error('Error fetching analytics trends:', error);
     res.status(500).json({ error: 'Failed to fetch analytics trends' });
   }
 });

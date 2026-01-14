@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const CafeDailyMetrics = require('./cafeDailyMetrics');
 
 class Order {
   // Get all orders
@@ -226,18 +227,40 @@ class Order {
       const safeExtraChargeNote = extra_charge_note || null;
       const safeNotes = notes || null;
 
-      // Create order
-      const [orderResult] = await connection.execute(`
-        INSERT INTO orders (
-          order_number, customer_id, customer_name, customer_email, customer_phone, table_number,
-          total_amount, tax_amount, tip_amount, points_redeemed, final_amount,
-          payment_method, split_payment, split_payment_method, split_amount, extra_charge, extra_charge_note, notes, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-      `, [
+      // Check if cafe_id column exists and get cafe_id
+      const [cafeIdColumns] = await connection.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'orders' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = cafeIdColumns.length > 0;
+      const cafeId = orderData.cafe_id || null;
+
+      // Build INSERT statement dynamically
+      let insertFields = [
+        'order_number', 'customer_id', 'customer_name', 'customer_email', 'customer_phone', 'table_number',
+        'total_amount', 'tax_amount', 'tip_amount', 'points_redeemed', 'final_amount',
+        'payment_method', 'split_payment', 'split_payment_method', 'split_amount', 'extra_charge', 'extra_charge_note', 'notes', 'status'
+      ];
+      let insertValues = [
         orderNumber, null, safeCustomerName, safeCustomerEmail, safeCustomerPhone, table_number || null,
         safeTotalAmount, safeTaxAmount, safeTipAmount, orderData.points_redeemed || 0, safeFinalAmount,
-        safePaymentMethod, safeSplitPayment, safeSplitPaymentMethod, safeSplitAmount, safeExtraCharge, safeExtraChargeNote, safeNotes
-      ]);
+        safePaymentMethod, safeSplitPayment, safeSplitPaymentMethod, safeSplitAmount, safeExtraCharge, safeExtraChargeNote, safeNotes, 'pending'
+      ];
+
+      if (hasCafeId && cafeId) {
+        insertFields.push('cafe_id');
+        insertValues.push(cafeId);
+      }
+
+      // Create order
+      const [orderResult] = await connection.execute(`
+        INSERT INTO orders (${insertFields.join(', ')})
+        VALUES (${insertFields.map(() => '?').join(', ')})
+      `, insertValues);
 
       const orderId = orderResult.insertId;
 
@@ -262,6 +285,17 @@ class Order {
       await connection.commit();
       
       const result = await this.getById(orderId);
+      
+      // Update analytics metrics (async, non-blocking)
+      if (hasCafeId && cafeId && result.created_at) {
+        const orderDate = new Date(result.created_at).toISOString().split('T')[0];
+        CafeDailyMetrics.incrementOrder(cafeId, orderDate, parseFloat(safeFinalAmount || 0), false)
+          .catch(err => {
+            console.error('Error updating analytics metrics:', err);
+            // Don't throw - aggregation failures shouldn't break order creation
+          });
+      }
+      
       return result;
     } catch (error) {
       console.error('Error creating order:', error);
@@ -275,6 +309,13 @@ class Order {
   // Update order status
   static async updateStatus(id, status) {
     try {
+      // Get order before update to check previous status
+      const orderBefore = await this.getById(id);
+      const previousStatus = orderBefore.status;
+      const cafeId = orderBefore.cafe_id;
+      const orderDate = orderBefore.created_at ? new Date(orderBefore.created_at).toISOString().split('T')[0] : null;
+      const finalAmount = parseFloat(orderBefore.final_amount || 0);
+
       const [result] = await pool.execute(`
         UPDATE orders 
         SET status = ?, updated_at = CURRENT_TIMESTAMP
@@ -285,7 +326,24 @@ class Order {
         throw new Error('Order not found');
       }
 
-      return await this.getById(id);
+      const updatedOrder = await this.getById(id);
+
+      // Update analytics metrics (async, non-blocking)
+      if (cafeId && orderDate) {
+        const wasCompleted = previousStatus === 'completed';
+        const isNowCompleted = status === 'completed';
+
+        if (wasCompleted !== isNowCompleted) {
+          // Status changed to/from completed - update metrics
+          CafeDailyMetrics.updateOrderCompletion(cafeId, orderDate, finalAmount, isNowCompleted)
+            .catch(err => {
+              console.error('Error updating analytics metrics:', err);
+              // Don't throw - aggregation failures shouldn't break order updates
+            });
+        }
+      }
+
+      return updatedOrder;
     } catch (error) {
       throw new Error(`Error updating order status: ${error.message}`);
     }

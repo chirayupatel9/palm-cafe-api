@@ -117,3 +117,8 @@ rules:
     match: "test/**/*.js"
     apply:
       - require_test_structures: ["describe", "it/test blocks"]
+
+# ========================
+# Commit messages
+# ========================
+- One line commit messages are allowed. No need to write long commit messages. Straight to the point.
