@@ -882,16 +882,36 @@ app.get('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
       `);
       
       if (columns.length > 0) {
-        const [settings] = await pool.execute(
-          'SELECT primary_color, accent_color, logo_url FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1',
-          [id]
-        );
+        // Check which color columns exist in the cafe_settings table
+        const [colorColumns] = await pool.execute(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_SCHEMA = DATABASE() 
+          AND TABLE_NAME = 'cafe_settings'
+          AND COLUMN_NAME IN ('primary_color', 'accent_color', 'logo_url')
+        `);
         
-        if (settings.length > 0) {
-          cafe.primary_color = settings[0].primary_color;
-          cafe.accent_color = settings[0].accent_color;
-          if (settings[0].logo_url) {
-            cafe.logo_url = settings[0].logo_url;
+        const existingColorColumns = colorColumns.map(col => col.COLUMN_NAME);
+        
+        if (existingColorColumns.length > 0) {
+          // Build dynamic SELECT query based on existing columns
+          const selectColumns = existingColorColumns.join(', ');
+          
+          const [settings] = await pool.execute(
+            `SELECT ${selectColumns} FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1`,
+            [id]
+          );
+          
+          if (settings.length > 0) {
+            if (existingColorColumns.includes('primary_color') && settings[0].primary_color) {
+              cafe.primary_color = settings[0].primary_color;
+            }
+            if (existingColorColumns.includes('accent_color') && settings[0].accent_color) {
+              cafe.accent_color = settings[0].accent_color;
+            }
+            if (existingColorColumns.includes('logo_url') && settings[0].logo_url) {
+              cafe.logo_url = settings[0].logo_url;
+            }
           }
         }
       }
