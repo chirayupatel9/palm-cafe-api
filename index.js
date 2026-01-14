@@ -29,7 +29,7 @@ const auditService = require('./services/auditService');
 const Feature = require('./models/feature');
 const { auth, adminAuth, chefAuth, JWT_SECRET } = require('./middleware/auth');
 const { validateCafeAccess, requireSuperAdmin } = require('./middleware/cafeAuth');
-const { requireModule, requireActiveSubscription } = require('./middleware/subscriptionAuth');
+const { requireFeature, requireActiveSubscription } = require('./middleware/subscriptionAuth');
 const { requireOnboarding, allowOnboardingRoutes } = require('./middleware/onboardingAuth');
 const logger = require('./config/logger');
 const { generalLimiter, authLimiter, uploadLimiter, apiLimiter } = require('./middleware/rateLimiter');
@@ -1182,6 +1182,14 @@ app.get('/api/cafe/features', auth, async (req, res) => {
     const features = await featureService.resolveCafeFeatures(req.user.cafe_id);
     const subscription = await subscriptionService.getCafeSubscription(req.user.cafe_id);
     
+    // Debug logging
+    if (subscription?.plan === 'PRO') {
+      const enabledFeatures = Object.entries(features)
+        .filter(([key, enabled]) => enabled)
+        .map(([key]) => key);
+      console.log(`[API] Cafe ${req.user.cafe_id} (${subscription.plan}): Enabled features:`, enabledFeatures.join(', '));
+    }
+    
     res.json({
       features,
       plan: subscription?.plan || 'FREE',
@@ -1832,7 +1840,7 @@ app.delete('/api/categories/:id', async (req, res) => {
 
 // Get all menu items
 // Supports both old pattern (no cafe) and new pattern (with cafe)
-app.get('/api/menu', auth, requireActiveSubscription, requireModule('menu_management'), async (req, res) => {
+app.get('/api/menu', auth, requireActiveSubscription, requireFeature('menu_management'), async (req, res) => {
   try {
     let cafeId = null;
     
@@ -1866,7 +1874,7 @@ app.get('/api/menu', auth, requireActiveSubscription, requireModule('menu_manage
 
 // Get menu items grouped by category
 // Supports both old pattern (no cafe) and new pattern (with cafe)
-app.get('/api/menu/grouped', auth, requireActiveSubscription, requireModule('menu_management'), async (req, res) => {
+app.get('/api/menu/grouped', auth, requireActiveSubscription, requireFeature('menu_management'), async (req, res) => {
   try {
     let cafeId = null;
     
@@ -1899,7 +1907,7 @@ app.get('/api/menu/grouped', auth, requireActiveSubscription, requireModule('men
 });
 
 // Add new menu item
-app.post('/api/menu', auth, requireActiveSubscription, requireModule('menu_management'), async (req, res) => {
+app.post('/api/menu', auth, requireActiveSubscription, requireFeature('menu_management'), async (req, res) => {
   try {
     const { category_id, name, description, price, sort_order, image_url } = req.body;
     
@@ -2793,7 +2801,7 @@ app.get('/api/reports/top-items', async (req, res) => {
 // Inventory Management Routes
 
 // Get all inventory items
-app.get('/api/inventory', auth, requireActiveSubscription, requireModule('inventory'), async (req, res) => {
+app.get('/api/inventory', auth, requireActiveSubscription, requireFeature('inventory'), async (req, res) => {
   try {
     const inventory = await Inventory.getAll();
     res.json(inventory);
@@ -2804,7 +2812,7 @@ app.get('/api/inventory', auth, requireActiveSubscription, requireModule('invent
 });
 
 // Create new inventory item
-app.post('/api/inventory', auth, requireActiveSubscription, requireModule('inventory'), async (req, res) => {
+app.post('/api/inventory', auth, requireActiveSubscription, requireFeature('inventory'), async (req, res) => {
   try {
     const { name, category, quantity, unit, cost_per_unit, supplier, reorder_level, description } = req.body;
     

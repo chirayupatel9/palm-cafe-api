@@ -23,7 +23,8 @@ async function resolveCafeFeatures(cafeId) {
       throw new Error('Cafe not found');
     }
 
-    const plan = cafe.subscription_plan || 'FREE';
+    // Normalize plan to uppercase to ensure consistency
+    const plan = cafe.subscription_plan ? cafe.subscription_plan.toUpperCase() : 'FREE';
     const status = cafe.subscription_status || 'active';
 
     // If subscription is not active, all features are disabled
@@ -48,18 +49,25 @@ async function resolveCafeFeatures(cafeId) {
     for (const feature of allFeatures) {
       // Check if there's a cafe override
       if (overrides.hasOwnProperty(feature.key)) {
-        // MySQL returns 1/0 for BOOLEAN, convert to boolean
-        const overrideValue = overrides[feature.key];
-        featureMap[feature.key] = overrideValue === true || overrideValue === 1;
+        // Override value is already converted to boolean by Feature model
+        featureMap[feature.key] = overrides[feature.key] === true;
       } else {
-        // Use plan default
-        // MySQL returns 1/0 for BOOLEAN, convert to boolean
+        // Use plan default (already converted to boolean by Feature model)
         if (plan === 'PRO') {
-          featureMap[feature.key] = feature.default_pro === true || feature.default_pro === 1;
+          featureMap[feature.key] = feature.default_pro === true;
         } else {
-          featureMap[feature.key] = feature.default_free === true || feature.default_free === 1;
+          featureMap[feature.key] = feature.default_free === true;
         }
       }
+    }
+    
+    // Debug logging for PRO plans
+    if (plan === 'PRO') {
+      const enabledFeatures = Object.entries(featureMap)
+        .filter(([key, enabled]) => enabled)
+        .map(([key]) => key);
+      console.log(`[Feature Resolution] Cafe ${cafeId} - Plan: ${plan}, Status: ${status}`);
+      console.log(`[Feature Resolution] Enabled features (${enabledFeatures.length}):`, enabledFeatures.join(', '));
     }
     
     return featureMap;
@@ -93,7 +101,8 @@ async function getFeatureResolutionDetails(cafeId) {
       throw new Error('Cafe not found');
     }
 
-    const plan = cafe.subscription_plan || 'FREE';
+    // Normalize plan to uppercase to ensure consistency
+    const plan = cafe.subscription_plan ? cafe.subscription_plan.toUpperCase() : 'FREE';
     const status = cafe.subscription_status || 'active';
     
     const allFeatures = await Feature.getAll();

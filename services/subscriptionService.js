@@ -109,6 +109,8 @@ async function getCafeSubscription(cafeId) {
     }
 
     // enabled_modules is already parsed by Cafe.getById()
+    // DEPRECATED: enabled_modules field is kept for backward compatibility only.
+    // The new feature system uses cafe_feature_overrides table via featureService.
     // Check if it's already an object or needs parsing
     let enabledModules = null;
     if (cafe.enabled_modules) {
@@ -123,10 +125,13 @@ async function getCafeSubscription(cafeId) {
       }
     }
 
+    // Normalize plan to uppercase to ensure consistency
+    const plan = cafe.subscription_plan ? cafe.subscription_plan.toUpperCase() : PLANS.FREE;
+    
     return {
-      plan: cafe.subscription_plan || PLANS.FREE,
+      plan: plan,
       status: cafe.subscription_status || STATUSES.ACTIVE,
-      enabledModules: enabledModules
+      enabledModules: enabledModules // DEPRECATED: Use features from /api/cafe/features endpoint instead
     };
   } catch (error) {
     throw new Error(`Error fetching cafe subscription: ${error.message}`);
@@ -135,34 +140,15 @@ async function getCafeSubscription(cafeId) {
 
 /**
  * Check if cafe has access to a module
+ * DEPRECATED: Use featureService.cafeHasFeature() instead
  * 
- * Logic:
- * 1. If subscription_status is not 'active', deny access
- * 2. If enabled_modules override exists for this module, use that
- * 3. Otherwise, check if the plan includes the module
+ * This function now uses the new feature system for consistency.
+ * The old enabled_modules JSON field is no longer used.
  */
 async function cafeHasModuleAccess(cafeId, module) {
   try {
-    const subscription = await getCafeSubscription(cafeId);
-    
-    if (!subscription) {
-      return false;
-    }
-
-    // If subscription is not active, deny access
-    if (subscription.status !== STATUSES.ACTIVE) {
-      return false;
-    }
-
-    // Check for per-cafe module override
-    if (subscription.enabledModules !== null && typeof subscription.enabledModules === 'object') {
-      if (subscription.enabledModules.hasOwnProperty(module)) {
-        return subscription.enabledModules[module] === true;
-      }
-    }
-
-    // Check plan-based access
-    return planHasModule(subscription.plan, module);
+    // Use the new feature service for consistency
+    return await featureService.cafeHasFeature(cafeId, module);
   } catch (error) {
     console.error('Error checking module access:', error);
     return false;

@@ -13,7 +13,12 @@ class Feature {
       const [rows] = await pool.execute(
         'SELECT * FROM features ORDER BY name'
       );
-      return rows;
+      // Convert MySQL BOOLEAN (TINYINT) to JavaScript boolean
+      return rows.map(row => ({
+        ...row,
+        default_free: row.default_free === 1 || row.default_free === true,
+        default_pro: row.default_pro === 1 || row.default_pro === true
+      }));
     } catch (error) {
       throw new Error(`Error fetching features: ${error.message}`);
     }
@@ -28,7 +33,15 @@ class Feature {
         'SELECT * FROM features WHERE `key` = ?',
         [key]
       );
-      return rows[0] || null;
+      if (rows[0]) {
+        // Convert MySQL BOOLEAN (TINYINT) to JavaScript boolean
+        return {
+          ...rows[0],
+          default_free: rows[0].default_free === 1 || rows[0].default_free === true,
+          default_pro: rows[0].default_pro === 1 || rows[0].default_pro === true
+        };
+      }
+      return null;
     } catch (error) {
       throw new Error(`Error fetching feature: ${error.message}`);
     }
@@ -137,9 +150,10 @@ class Feature {
       );
       
       // Convert to map for easy lookup
+      // Convert MySQL BOOLEAN (TINYINT) to JavaScript boolean
       const overrides = {};
       rows.forEach(row => {
-        overrides[row.feature_key] = row.enabled;
+        overrides[row.feature_key] = row.enabled === 1 || row.enabled === true;
       });
       
       return overrides;

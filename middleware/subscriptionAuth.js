@@ -104,12 +104,13 @@ const requireFeature = (featureKey) => {
 
 /**
  * Require that the cafe has access to a specific module
- * DEPRECATED: Use requireFeature instead
+ * @deprecated Use requireFeature() instead. This function is kept for backward compatibility only.
  * 
- * @param {string} module - The module name to check
+ * @param {string} module - The module name to check (same as feature key)
+ * @returns {Function} Middleware function that checks feature access
  */
 const requireModule = (module) => {
-  // Map old module names to feature keys
+  // Map old module names to feature keys (they're the same, so just pass through)
   return requireFeature(module);
 };
 
