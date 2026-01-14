@@ -27,6 +27,7 @@ const subscriptionService = require('./services/subscriptionService');
 const featureService = require('./services/featureService');
 const auditService = require('./services/auditService');
 const Feature = require('./models/feature');
+const bcrypt = require('bcryptjs');
 const { auth, adminAuth, chefAuth, JWT_SECRET } = require('./middleware/auth');
 const { validateCafeAccess, requireSuperAdmin } = require('./middleware/cafeAuth');
 const { requireFeature, requireActiveSubscription } = require('./middleware/subscriptionAuth');
@@ -1670,6 +1671,548 @@ app.delete('/api/superadmin/users/:id', auth, requireSuperAdmin, async (req, res
   } catch (error) {
     console.error('Error deleting user:', error);
     res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+// ========================
+// Cafe-Scoped User Management (Cafe Admin only)
+// ========================
+
+// Get all users for the current cafe (Cafe Admin only)
+app.get('/api/users', auth, adminAuth, async (req, res) => {
+  try {
+    // Verify user is admin and has cafe_id
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+    }
+    
+    if (!req.user.cafe_id) {
+      return res.status(403).json({ error: 'Access denied. User must belong to a cafe.' });
+    }
+    
+    // Get all users for this cafe
+    const users = await User.getAll(req.user.cafe_id);
+    
+    res.json(users);
+  } catch (error) {
+    console.error('Error fetching cafe users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// Create new user in the current cafe (Cafe Admin only)
+app.post('/api/users', auth, adminAuth, async (req, res) => {
+  try {
+    // Verify user is admin and has cafe_id
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+    }
+    
+    if (!req.user.cafe_id) {
+      return res.status(403).json({ error: 'Access denied. User must belong to a cafe.' });
+    }
+    
+    const { username, email, password, role } = req.body;
+    
+    // Validate input
+    if (!username || !email || !password || !role) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+    
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    }
+    
+    // Verify role is valid (not superadmin, and must be cafe role)
+    const validRoles = ['admin', 'chef', 'reception'];
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({ error: 'Invalid role. Must be admin, chef, or reception' });
+    }
+    
+    // Check if user already exists
+    const existingUser = await User.findByEmail(email);
+    if (existingUser) {
+      return res.status(400).json({ error: 'User with this email already exists' });
+    }
+    
+    // Create new user with cafe assignment
+    const user = await User.create({ 
+      username, 
+      email, 
+      password, 
+      role,
+      cafe_id: req.user.cafe_id
+    });
+    
+    const userWithCafe = await User.findByIdWithCafe(user.id);
+    
+    res.status(201).json({
+      message: 'User created successfully',
+      user: userWithCafe
+    });
+  } catch (error) {
+    console.error('Error creating user:', error);
+    res.status(500).json({ error: 'Failed to create user' });
+  }
+});
+
+// Update user in the current cafe (Cafe Admin only)
+app.put('/api/users/:id', auth, adminAuth, async (req, res) => {
+  try {
+    // Verify user is admin and has cafe_id
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+    }
+    
+    if (!req.user.cafe_id) {
+      return res.status(403).json({ error: 'Access denied. User must belong to a cafe.' });
+    }
+    
+    const { id } = req.params;
+    const { username, email, role, password, is_active } = req.body;
+    
+    // Verify user exists and belongs to the same cafe
+    const targetUser = await User.findById(id);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Ensure user belongs to the same cafe
+    if (targetUser.cafe_id !== req.user.cafe_id) {
+      return res.status(403).json({ error: 'Access denied. User does not belong to your cafe.' });
+    }
+    
+    // Prevent modifying superadmin users
+    if (targetUser.role === 'superadmin') {
+      return res.status(400).json({ error: 'Cannot modify superadmin users' });
+    }
+    
+    // Build update query dynamically
+    const updates = [];
+    const params = [];
+    
+    if (username !== undefined) {
+      updates.push('username = ?');
+      params.push(username);
+    }
+    
+    if (email !== undefined) {
+      // Check if email is already taken by another user
+      const existingUser = await User.findByEmail(email);
+      if (existingUser && existingUser.id !== parseInt(id)) {
+        return res.status(400).json({ error: 'Email already in use' });
+      }
+      updates.push('email = ?');
+      params.push(email);
+    }
+    
+    if (role !== undefined) {
+      // Verify role is valid (not superadmin)
+      const validRoles = ['admin', 'chef', 'reception'];
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ error: 'Invalid role. Must be admin, chef, or reception' });
+      }
+      updates.push('role = ?');
+      params.push(role);
+    }
+    
+    if (password !== undefined && password.length > 0) {
+      if (password.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+      }
+      const saltRounds = 10;
+      const hashedPassword = await bcrypt.hash(password, saltRounds);
+      updates.push('password = ?');
+      params.push(hashedPassword);
+    }
+    
+    // Check if is_active column exists
+    const [columns] = await pool.execute(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'users' 
+      AND COLUMN_NAME = 'is_active'
+    `);
+    
+    if (is_active !== undefined && columns.length > 0) {
+      updates.push('is_active = ?');
+      params.push(is_active ? 1 : 0);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    
+    updates.push('updated_at = NOW()');
+    params.push(id);
+    
+    await pool.execute(
+      `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+      params
+    );
+    
+    const updatedUser = await User.findByIdWithCafe(id);
+    
+    res.json({
+      message: 'User updated successfully',
+      user: updatedUser
+    });
+  } catch (error) {
+    console.error('Error updating user:', error);
+    res.status(500).json({ error: 'Failed to update user' });
+  }
+});
+
+// Delete/Disable user in the current cafe (Cafe Admin only)
+app.delete('/api/users/:id', auth, adminAuth, async (req, res) => {
+  try {
+    // Verify user is admin and has cafe_id
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+    }
+    
+    if (!req.user.cafe_id) {
+      return res.status(403).json({ error: 'Access denied. User must belong to a cafe.' });
+    }
+    
+    const { id } = req.params;
+    
+    // Verify user exists and belongs to the same cafe
+    const targetUser = await User.findById(id);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Ensure user belongs to the same cafe
+    if (targetUser.cafe_id !== req.user.cafe_id) {
+      return res.status(403).json({ error: 'Access denied. User does not belong to your cafe.' });
+    }
+    
+    // Prevent deleting superadmin users
+    if (targetUser.role === 'superadmin') {
+      return res.status(400).json({ error: 'Cannot delete superadmin users' });
+    }
+    
+    // Prevent deleting yourself
+    if (parseInt(id) === req.user.id) {
+      return res.status(400).json({ error: 'Cannot delete your own account' });
+    }
+    
+    // Check if is_active column exists
+    const [columns] = await pool.execute(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'users' 
+      AND COLUMN_NAME = 'is_active'
+    `);
+    
+    if (columns.length > 0) {
+      // Soft delete: set is_active to false
+      await pool.execute(
+        'UPDATE users SET is_active = 0, updated_at = NOW() WHERE id = ?',
+        [id]
+      );
+    } else {
+      // Hard delete if is_active column doesn't exist
+      await User.delete(id);
+    }
+    
+    res.json({
+      message: 'User disabled successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+// ========================
+// Cafe-Scoped Analytics (Cafe Admin/Manager only)
+// ========================
+
+// Get analytics overview (Cafe Admin/Manager only)
+app.get('/api/analytics/overview', auth, requireFeature('analytics'), async (req, res) => {
+  try {
+    // Verify user has cafe_id
+    if (!req.user.cafe_id) {
+      return res.status(403).json({ error: 'Access denied. User must belong to a cafe.' });
+    }
+    
+    // Verify role (admin or manager if exists)
+    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+      return res.status(403).json({ error: 'Access denied. Admin or manager privileges required.' });
+    }
+    
+    const cafeId = req.user.cafe_id;
+    
+    // Check if cafe_id columns exist
+    const [ordersColumns] = await pool.execute(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'orders' 
+      AND COLUMN_NAME = 'cafe_id'
+    `);
+    
+    if (ordersColumns.length === 0) {
+      // Return empty metrics if cafe_id column doesn't exist
+      return res.json({
+        orders: {
+          total: 0,
+          today: 0,
+          this_month: 0
+        },
+        revenue: {
+          total: 0,
+          today: 0,
+          this_month: 0
+        },
+        customers: {
+          total: 0,
+          new_this_month: 0,
+          returning: 0
+        }
+      });
+    }
+    
+    // Order metrics
+    const [totalOrders] = await pool.execute(
+      'SELECT COUNT(*) as count FROM orders WHERE cafe_id = ?',
+      [cafeId]
+    );
+    const [ordersToday] = await pool.execute(
+      'SELECT COUNT(*) as count FROM orders WHERE cafe_id = ? AND DATE(created_at) = CURDATE()',
+      [cafeId]
+    );
+    const [ordersThisMonth] = await pool.execute(
+      'SELECT COUNT(*) as count FROM orders WHERE cafe_id = ? AND MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())',
+      [cafeId]
+    );
+    
+    // Revenue metrics (from completed orders)
+    const [totalRevenue] = await pool.execute(
+      'SELECT COALESCE(SUM(final_amount), 0) as total FROM orders WHERE cafe_id = ? AND status = "completed"',
+      [cafeId]
+    );
+    const [revenueToday] = await pool.execute(
+      'SELECT COALESCE(SUM(final_amount), 0) as total FROM orders WHERE cafe_id = ? AND status = "completed" AND DATE(created_at) = CURDATE()',
+      [cafeId]
+    );
+    const [revenueThisMonth] = await pool.execute(
+      `SELECT COALESCE(SUM(final_amount), 0) as total 
+       FROM orders 
+       WHERE cafe_id = ? 
+       AND status = "completed" 
+       AND MONTH(created_at) = MONTH(CURDATE()) 
+       AND YEAR(created_at) = YEAR(CURDATE())`,
+      [cafeId]
+    );
+    
+    // Customer metrics
+    const [customersColumns] = await pool.execute(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'customers' 
+      AND COLUMN_NAME = 'cafe_id'
+    `);
+    
+    let customerMetrics = {
+      total: 0,
+      new_this_month: 0,
+      returning: 0
+    };
+    
+    if (customersColumns.length > 0) {
+      const [totalCustomers] = await pool.execute(
+        'SELECT COUNT(*) as count FROM customers WHERE cafe_id = ?',
+        [cafeId]
+      );
+      const [customersThisMonth] = await pool.execute(
+        'SELECT COUNT(*) as count FROM customers WHERE cafe_id = ? AND MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())',
+        [cafeId]
+      );
+      
+      // Returning customers = customers with more than 1 order
+      const [returningCustomers] = await pool.execute(
+        `SELECT COUNT(*) as count 
+         FROM (
+           SELECT c.id 
+           FROM customers c
+           INNER JOIN orders o ON c.id = o.customer_id
+           WHERE c.cafe_id = ? AND o.cafe_id = ?
+           GROUP BY c.id
+           HAVING COUNT(o.id) > 1
+         ) as returning`,
+        [cafeId, cafeId]
+      );
+      
+      customerMetrics = {
+        total: totalCustomers[0].count,
+        new_this_month: customersThisMonth[0].count,
+        returning: returningCustomers.length || 0
+      };
+    }
+    
+    res.json({
+      orders: {
+        total: totalOrders[0].count,
+        today: ordersToday[0].count,
+        this_month: ordersThisMonth[0].count
+      },
+      revenue: {
+        total: parseFloat(totalRevenue[0].total || 0),
+        today: parseFloat(revenueToday[0].total || 0),
+        this_month: parseFloat(revenueThisMonth[0].total || 0)
+      },
+      customers: customerMetrics
+    });
+  } catch (error) {
+    console.error('Error fetching analytics overview:', error);
+    res.status(500).json({ error: 'Failed to fetch analytics overview' });
+  }
+});
+
+// Get analytics trends (Cafe Admin/Manager only)
+app.get('/api/analytics/trends', auth, requireFeature('analytics'), async (req, res) => {
+  try {
+    // Verify user has cafe_id
+    if (!req.user.cafe_id) {
+      return res.status(403).json({ error: 'Access denied. User must belong to a cafe.' });
+    }
+    
+    // Verify role
+    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+      return res.status(403).json({ error: 'Access denied. Admin or manager privileges required.' });
+    }
+    
+    const cafeId = req.user.cafe_id;
+    const { days = 30 } = req.query; // Default to last 30 days
+    
+    // Check if cafe_id columns exist
+    const [ordersColumns] = await pool.execute(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'orders' 
+      AND COLUMN_NAME = 'cafe_id'
+    `);
+    
+    if (ordersColumns.length === 0) {
+      return res.json({
+        orders: [],
+        revenue: []
+      });
+    }
+    
+    // Get daily orders and revenue for the last N days
+    const [dailyData] = await pool.execute(
+      `SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as order_count,
+        COALESCE(SUM(CASE WHEN status = 'completed' THEN final_amount ELSE 0 END), 0) as revenue
+       FROM orders
+       WHERE cafe_id = ? 
+       AND created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+       GROUP BY DATE(created_at)
+       ORDER BY date ASC`,
+      [cafeId, parseInt(days)]
+    );
+    
+    // Format for frontend
+    const orders = dailyData.map(row => ({
+      date: row.date.toISOString().split('T')[0],
+      count: row.order_count
+    }));
+    
+    const revenue = dailyData.map(row => ({
+      date: row.date.toISOString().split('T')[0],
+      amount: parseFloat(row.revenue || 0)
+    }));
+    
+    res.json({
+      orders,
+      revenue
+    });
+  } catch (error) {
+    console.error('Error fetching analytics trends:', error);
+    res.status(500).json({ error: 'Failed to fetch analytics trends' });
+  }
+});
+
+// Get customer analytics (Cafe Admin/Manager only)
+app.get('/api/analytics/customers', auth, requireFeature('analytics'), async (req, res) => {
+  try {
+    // Verify user has cafe_id
+    if (!req.user.cafe_id) {
+      return res.status(403).json({ error: 'Access denied. User must belong to a cafe.' });
+    }
+    
+    // Verify role
+    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+      return res.status(403).json({ error: 'Access denied. Admin or manager privileges required.' });
+    }
+    
+    const cafeId = req.user.cafe_id;
+    
+    // Check if cafe_id columns exist
+    const [customersColumns] = await pool.execute(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'customers' 
+      AND COLUMN_NAME = 'cafe_id'
+    `);
+    
+    if (customersColumns.length === 0) {
+      return res.json({
+        total: 0,
+        new_this_month: 0,
+        active: 0,
+        returning: 0
+      });
+    }
+    
+    const [totalCustomers] = await pool.execute(
+      'SELECT COUNT(*) as count FROM customers WHERE cafe_id = ?',
+      [cafeId]
+    );
+    
+    const [customersThisMonth] = await pool.execute(
+      'SELECT COUNT(*) as count FROM customers WHERE cafe_id = ? AND MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())',
+      [cafeId]
+    );
+    
+    const [activeCustomers] = await pool.execute(
+      'SELECT COUNT(*) as count FROM customers WHERE cafe_id = ? AND is_active = TRUE',
+      [cafeId]
+    );
+    
+    // Returning customers = customers with more than 1 order
+    const [returningCustomers] = await pool.execute(
+      `SELECT COUNT(*) as count 
+       FROM (
+         SELECT c.id 
+         FROM customers c
+         INNER JOIN orders o ON c.id = o.customer_id
+         WHERE c.cafe_id = ? AND o.cafe_id = ?
+         GROUP BY c.id
+         HAVING COUNT(o.id) > 1
+       ) as returning`,
+      [cafeId, cafeId]
+    );
+    
+    res.json({
+      total: totalCustomers[0].count,
+      new_this_month: customersThisMonth[0].count,
+      active: activeCustomers[0].count,
+      returning: returningCustomers.length || 0
+    });
+  } catch (error) {
+    console.error('Error fetching customer analytics:', error);
+    res.status(500).json({ error: 'Failed to fetch customer analytics' });
   }
 });
 
