@@ -869,6 +869,35 @@ app.get('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
       return res.status(404).json({ error: 'Cafe not found' });
     }
     
+    // Also fetch cafe settings to include branding
+    try {
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'cafe_settings' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      if (columns.length > 0) {
+        const [settings] = await pool.execute(
+          'SELECT primary_color, accent_color, logo_url FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1',
+          [id]
+        );
+        
+        if (settings.length > 0) {
+          cafe.primary_color = settings[0].primary_color;
+          cafe.accent_color = settings[0].accent_color;
+          if (settings[0].logo_url) {
+            cafe.logo_url = settings[0].logo_url;
+          }
+        }
+      }
+    } catch (settingsError) {
+      // Ignore settings errors, just return cafe data
+      console.warn('Error fetching cafe branding:', settingsError);
+    }
+    
     res.json(cafe);
   } catch (error) {
     console.error('Error fetching cafe:', error);
@@ -880,7 +909,7 @@ app.get('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
 app.put('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { slug, name, description, logo_url, address, phone, email, website, is_active } = req.body;
+    const { slug, name, description, logo_url, address, phone, email, website, is_active, primary_color, accent_color } = req.body;
 
     // Validate slug format if provided
     if (slug && !/^[a-z0-9-]+$/.test(slug)) {
@@ -909,6 +938,58 @@ app.put('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
       subscription_status: req.body.subscription_status,
       enabled_modules: req.body.enabled_modules
     });
+
+    // Update cafe settings with branding colors if provided
+    if (primary_color !== undefined || accent_color !== undefined || logo_url !== undefined) {
+      try {
+        // Check if cafe_settings table has cafe_id column
+        const [columns] = await pool.execute(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_SCHEMA = DATABASE() 
+          AND TABLE_NAME = 'cafe_settings' 
+          AND COLUMN_NAME = 'cafe_id'
+        `);
+        
+        if (columns.length > 0) {
+          // Get current cafe settings
+          const [existing] = await pool.execute(
+            'SELECT * FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1',
+            [id]
+          );
+          
+          const brandingUpdates = {};
+          if (primary_color !== undefined) brandingUpdates.primary_color = primary_color;
+          if (accent_color !== undefined) brandingUpdates.accent_color = accent_color;
+          if (logo_url !== undefined) brandingUpdates.logo_url = logo_url;
+          
+          if (existing.length > 0) {
+            // Update existing settings
+            const updateFields = Object.keys(brandingUpdates).map(key => `${key} = ?`).join(', ');
+            const updateValues = Object.values(brandingUpdates);
+            updateValues.push(id);
+            
+            await pool.execute(
+              `UPDATE cafe_settings SET ${updateFields}, updated_at = CURRENT_TIMESTAMP WHERE cafe_id = ? AND is_active = TRUE`,
+              updateValues
+            );
+          } else {
+            // Create new settings with branding
+            const fields = ['cafe_id', 'cafe_name', ...Object.keys(brandingUpdates)];
+            const placeholders = fields.map(() => '?').join(', ');
+            const values = [id, cafe.name, ...Object.values(brandingUpdates)];
+            
+            await pool.execute(
+              `INSERT INTO cafe_settings (${fields.join(', ')}, is_active, created_at, updated_at) VALUES (${placeholders}, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              values
+            );
+          }
+        }
+      } catch (settingsError) {
+        // Log error but don't fail the cafe update
+        console.warn('Error updating cafe branding settings:', settingsError);
+      }
+    }
 
     res.json({
       message: 'Cafe updated successfully',
