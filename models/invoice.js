@@ -517,8 +517,30 @@ class Invoice {
   // Get invoice statistics
   static async getStatistics() {
     try {
+      // Check which columns exist
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'invoices'
+      `);
+      
+      const existingColumns = columns.map(col => col.COLUMN_NAME);
+      const hasTotalAmount = existingColumns.includes('total_amount');
+      const hasTotal = existingColumns.includes('total');
+      const hasTipAmount = existingColumns.includes('tip_amount');
+      const hasTaxAmount = existingColumns.includes('tax_amount');
+
+      // Build revenue query based on available columns
+      let revenueColumn = '0';
+      if (hasTotalAmount) {
+        revenueColumn = 'SUM(total_amount)';
+      } else if (hasTotal) {
+        revenueColumn = 'SUM(total)';
+      }
+
       const [totalRevenue] = await pool.execute(`
-        SELECT SUM(total_amount) as totalRevenue
+        SELECT ${revenueColumn} as totalRevenue
         FROM invoices
       `);
 
@@ -532,13 +554,25 @@ class Invoice {
         FROM invoices
       `);
 
+      // Build tips query based on available columns
+      let tipsColumn = '0';
+      if (hasTipAmount) {
+        tipsColumn = 'SUM(tip_amount)';
+      }
+
       const [totalTips] = await pool.execute(`
-        SELECT SUM(tip_amount) as totalTips
+        SELECT ${tipsColumn} as totalTips
         FROM invoices
       `);
 
+      // Build tax query based on available columns
+      let taxColumn = '0';
+      if (hasTaxAmount) {
+        taxColumn = 'SUM(tax_amount)';
+      }
+
       const [totalTax] = await pool.execute(`
-        SELECT SUM(tax_amount) as totalTax
+        SELECT ${taxColumn} as totalTax
         FROM invoices
       `);
 

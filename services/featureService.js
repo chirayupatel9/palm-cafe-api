@@ -61,15 +61,6 @@ async function resolveCafeFeatures(cafeId) {
       }
     }
     
-    // Debug logging for PRO plans
-    if (plan === 'PRO') {
-      const enabledFeatures = Object.entries(featureMap)
-        .filter(([key, enabled]) => enabled)
-        .map(([key]) => key);
-      console.log(`[Feature Resolution] Cafe ${cafeId} - Plan: ${plan}, Status: ${status}`);
-      console.log(`[Feature Resolution] Enabled features (${enabledFeatures.length}):`, enabledFeatures.join(', '));
-    }
-    
     return featureMap;
   } catch (error) {
     throw new Error(`Error resolving cafe features: ${error.message}`);
