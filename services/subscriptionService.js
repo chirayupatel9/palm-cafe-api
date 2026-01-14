@@ -233,13 +233,7 @@ async function updateCafeSubscription(cafeId, subscriptionData, changedBy = null
       throw new Error('No subscription data provided');
     }
     
-    console.log('Calling Cafe.update with:', updateData);
     const updatedCafe = await Cafe.update(cafeId, updateData);
-    console.log('Cafe.update returned:', {
-      id: updatedCafe.id,
-      subscription_plan: updatedCafe.subscription_plan,
-      subscription_status: updatedCafe.subscription_status
-    });
     
     return updatedCafe;
   } catch (error) {

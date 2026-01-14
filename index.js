@@ -967,29 +967,14 @@ app.put('/api/superadmin/cafes/:id/subscription', auth, requireSuperAdmin, async
       return res.status(400).json({ error: 'Either plan or status must be provided' });
     }
     
-    console.log(`Updating subscription for cafe ${id}: plan=${plan}, status=${status}`);
-    
     const updatedCafe = await subscriptionService.updateCafeSubscription(id, {
       plan,
       status
     }, req.user.id);
     
-    console.log(`Subscription updated successfully. Updated cafe object:`, {
-      id: updatedCafe.id,
-      subscription_plan: updatedCafe.subscription_plan,
-      subscription_status: updatedCafe.subscription_status
-    });
-    
     // Verify the update by fetching fresh data
     const freshCafe = await Cafe.getById(id);
     const freshSubscription = await subscriptionService.getCafeSubscription(id);
-    
-    console.log(`Fresh data after update:`, {
-      cafe_plan: freshCafe?.subscription_plan,
-      cafe_status: freshCafe?.subscription_status,
-      subscription_plan: freshSubscription?.plan,
-      subscription_status: freshSubscription?.status
-    });
     
     res.json({
       message: 'Subscription updated successfully',
@@ -2296,7 +2281,6 @@ app.get('/api/cafe-settings', async (req, res) => {
 // Update cafe settings
 app.put('/api/cafe-settings', auth, async (req, res) => {
   try {
-    console.log('Received cafe settings update request:', JSON.stringify(req.body, null, 2));
     const { 
       cafe_name, logo_url, address, phone, email, website, opening_hours, description,
       show_kitchen_tab, show_customers_tab, show_payment_methods_tab, show_menu_tab, show_inventory_tab, show_history_tab, show_menu_images,
@@ -2330,7 +2314,6 @@ app.put('/api/cafe-settings', auth, async (req, res) => {
     try {
       const testConnection = await pool.getConnection();
       testConnection.release();
-      console.log('Database connection test successful');
     } catch (dbError) {
       console.error('Database connection test failed:', dbError);
       return res.status(500).json({ 

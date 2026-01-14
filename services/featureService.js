@@ -62,17 +62,6 @@ async function resolveCafeFeatures(cafeId) {
       }
     }
     
-    // Debug logging for menu_management
-    if (featureMap.hasOwnProperty('menu_management')) {
-      console.log('🔍 Feature Resolution for menu_management:', {
-        cafeId,
-        plan,
-        status,
-        resolved: featureMap['menu_management'],
-        allFeatures: Object.keys(featureMap).filter(k => featureMap[k] === true)
-      });
-    }
-
     return featureMap;
   } catch (error) {
     throw new Error(`Error resolving cafe features: ${error.message}`);
@@ -86,26 +75,6 @@ async function cafeHasFeature(cafeId, featureKey) {
   try {
     const features = await resolveCafeFeatures(cafeId);
     const hasAccess = features[featureKey] === true;
-    
-    // Debug logging for menu_management specifically
-    if (featureKey === 'menu_management') {
-      const cafe = await Cafe.getById(cafeId);
-      const feature = await Feature.getByKey(featureKey);
-      const overrides = await Feature.getCafeOverrides(cafeId);
-      
-      console.log('🔍 Menu Management Feature Check:', {
-        cafeId,
-        cafePlan: cafe?.subscription_plan,
-        cafeStatus: cafe?.subscription_status,
-        featureExists: !!feature,
-        featureDefaultFree: feature?.default_free,
-        featureDefaultPro: feature?.default_pro,
-        hasOverride: overrides.hasOwnProperty(featureKey),
-        overrideValue: overrides[featureKey],
-        resolvedValue: features[featureKey],
-        hasAccess
-      });
-    }
     
     return hasAccess;
   } catch (error) {

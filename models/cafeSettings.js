@@ -127,7 +127,6 @@ class CafeSettings {
       `);
       
       const existingColumns = columns.map(col => col.COLUMN_NAME);
-      console.log('Available columns in cafe_settings:', existingColumns);
       
       // Build dynamic INSERT query based on existing columns
       const insertColumns = [];
@@ -221,9 +220,6 @@ class CafeSettings {
         }
       });
 
-      console.log('Inserting columns:', insertColumns);
-      console.log('Insert values count:', insertValues.length);
-
       // Deactivate current settings
       await connection.execute('UPDATE cafe_settings SET is_active = FALSE');
 
@@ -244,7 +240,6 @@ class CafeSettings {
       `);
       
       const existingHistoryColumns = historyColumns.map(col => col.COLUMN_NAME);
-      console.log('Available columns in cafe_settings_history:', existingHistoryColumns);
       
       const historyInsertColumns = [];
       const historyInsertValues = [];
@@ -283,12 +278,10 @@ class CafeSettings {
           INSERT INTO cafe_settings_history (${historyInsertColumns.join(', ')}) 
           VALUES (${historyInsertPlaceholders.join(', ')})
         `;
-        console.log('Inserting into history:', historyInsertColumns);
         await connection.execute(historyQuery, historyInsertValues);
       }
 
       await connection.commit();
-      console.log('Cafe settings updated successfully');
 
       // Return the updated settings
       return await this.getCurrent();

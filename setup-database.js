@@ -11,7 +11,6 @@ const dbConfig = {
   port: process.env.DB_PORT || 3306,
   multipleStatements: true
 };
-console.log(dbConfig);
 const databaseName = process.env.DB_NAME || 'cafe_app';
 
 async function createDatabase() {

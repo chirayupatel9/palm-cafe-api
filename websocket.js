@@ -9,11 +9,9 @@ class WebSocketManager {
     this.clients = new Set();
     
     this.wss.on('connection', (ws, req) => {
-      console.log('New WebSocket connection established');
       this.clients.add(ws);
       
       ws.on('close', () => {
-        console.log('WebSocket connection closed');
         this.clients.delete(ws);
       });
       
