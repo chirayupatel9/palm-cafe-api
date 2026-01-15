@@ -150,16 +150,17 @@ class MenuItem {
   // Get menu item by ID
   static async getById(id) {
     try {
-      // Check if featured_priority column exists
+      // Check if featured_priority and cafe_id columns exist
       const [columns] = await pool.execute(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
         WHERE TABLE_SCHEMA = DATABASE() 
         AND TABLE_NAME = 'menu_items' 
-        AND COLUMN_NAME = 'featured_priority'
+        AND COLUMN_NAME IN ('featured_priority', 'cafe_id')
       `);
       
-      const hasFeaturedPriority = columns.length > 0;
+      const hasFeaturedPriority = columns.some(col => col.COLUMN_NAME === 'featured_priority');
+      const hasCafeId = columns.some(col => col.COLUMN_NAME === 'cafe_id');
       
       let query = `
         SELECT 
@@ -178,6 +179,10 @@ class MenuItem {
       
       if (hasFeaturedPriority) {
         query += `, m.featured_priority`;
+      }
+      
+      if (hasCafeId) {
+        query += `, m.cafe_id`;
       }
       
       query += `

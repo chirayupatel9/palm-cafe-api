@@ -31,7 +31,7 @@ const impersonationService = require('./services/impersonationService');
 const Feature = require('./models/feature');
 const bcrypt = require('bcryptjs');
 const { auth, adminAuth, chefAuth, JWT_SECRET } = require('./middleware/auth');
-const { validateCafeAccess, requireSuperAdmin } = require('./middleware/cafeAuth');
+const { validateCafeAccess, requireCafeMembership, requireSuperAdmin } = require('./middleware/cafeAuth');
 const { requireFeature, requireActiveSubscription } = require('./middleware/subscriptionAuth');
 const { requireOnboarding, allowOnboardingRoutes } = require('./middleware/onboardingAuth');
 const logger = require('./config/logger');
@@ -981,31 +981,50 @@ app.put('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
             [id]
           );
           
-          const brandingUpdates = {};
-          if (primary_color !== undefined) brandingUpdates.primary_color = primary_color;
-          if (accent_color !== undefined) brandingUpdates.accent_color = accent_color;
-          if (logo_url !== undefined) brandingUpdates.logo_url = logo_url;
+          // Check which columns exist in cafe_settings table
+          const [columns] = await pool.execute(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = 'cafe_settings'
+          `);
           
-          if (existing.length > 0) {
-            // Update existing settings
-            const updateFields = Object.keys(brandingUpdates).map(key => `${key} = ?`).join(', ');
-            const updateValues = Object.values(brandingUpdates);
-            updateValues.push(id);
-            
-            await pool.execute(
-              `UPDATE cafe_settings SET ${updateFields}, updated_at = CURRENT_TIMESTAMP WHERE cafe_id = ? AND is_active = TRUE`,
-              updateValues
-            );
-          } else {
-            // Create new settings with branding
-            const fields = ['cafe_id', 'cafe_name', ...Object.keys(brandingUpdates)];
-            const placeholders = fields.map(() => '?').join(', ');
-            const values = [id, cafe.name, ...Object.values(brandingUpdates)];
-            
-            await pool.execute(
-              `INSERT INTO cafe_settings (${fields.join(', ')}, is_active, created_at, updated_at) VALUES (${placeholders}, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-              values
-            );
+          const existingColumns = columns.map(col => col.COLUMN_NAME);
+          
+          const brandingUpdates = {};
+          // Only include columns that actually exist in the database
+          if (primary_color !== undefined && existingColumns.includes('primary_color')) {
+            brandingUpdates.primary_color = primary_color;
+          }
+          if (accent_color !== undefined && existingColumns.includes('accent_color')) {
+            brandingUpdates.accent_color = accent_color;
+          }
+          if (logo_url !== undefined && existingColumns.includes('logo_url')) {
+            brandingUpdates.logo_url = logo_url;
+          }
+          
+          if (Object.keys(brandingUpdates).length > 0) {
+            if (existing.length > 0) {
+              // Update existing settings
+              const updateFields = Object.keys(brandingUpdates).map(key => `${key} = ?`).join(', ');
+              const updateValues = Object.values(brandingUpdates);
+              updateValues.push(id);
+              
+              await pool.execute(
+                `UPDATE cafe_settings SET ${updateFields}, updated_at = CURRENT_TIMESTAMP WHERE cafe_id = ? AND is_active = TRUE`,
+                updateValues
+              );
+            } else {
+              // Create new settings with branding - only include columns that exist
+              const fields = ['cafe_id', 'cafe_name', ...Object.keys(brandingUpdates)];
+              const placeholders = fields.map(() => '?').join(', ');
+              const values = [id, cafe.name, ...Object.values(brandingUpdates)];
+              
+              await pool.execute(
+                `INSERT INTO cafe_settings (${fields.join(', ')}, is_active, created_at, updated_at) VALUES (${placeholders}, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                values
+              );
+            }
           }
         }
       } catch (settingsError) {
@@ -3587,7 +3606,7 @@ app.delete('/api/cafe-settings/promo-banner-image', auth, async (req, res) => {
   }
 });
 
-// Upload menu item image
+// Upload menu item image (generic endpoint for new items - kept for backward compatibility)
 app.post('/api/menu/upload-image', auth, imageUpload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
@@ -3597,6 +3616,12 @@ app.post('/api/menu/upload-image', auth, imageUpload.single('image'), async (req
     // Validate file type
     if (!req.file.mimetype.startsWith('image/')) {
       return res.status(400).json({ error: 'Only image files are allowed' });
+    }
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (req.file.size > maxSize) {
+      return res.status(400).json({ error: 'Image size must be less than 5MB' });
     }
 
     // Generate unique filename
@@ -3624,6 +3649,129 @@ app.post('/api/menu/upload-image', auth, imageUpload.single('image'), async (req
   } catch (error) {
     console.error('Error uploading menu item image:', error);
     res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
+
+// Upload menu item image (specific to menu item ID)
+app.post('/api/menu/:id/image', auth, requireCafeMembership, imageUpload.single('image'), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file uploaded' });
+    }
+
+    // Validate file type
+    if (!req.file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: 'Only image files are allowed' });
+    }
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (req.file.size > maxSize) {
+      return res.status(400).json({ error: 'Image size must be less than 5MB' });
+    }
+
+    // Get menu item to verify it exists and user has access
+    const menuItem = await MenuItem.getById(id);
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    // Verify cafe access (if cafe_id column exists)
+    if (menuItem.cafe_id && req.user.cafe_id && menuItem.cafe_id !== req.user.cafe_id) {
+      // Allow superadmin to access any cafe's menu items
+      if (req.user.role !== 'superadmin') {
+        return res.status(403).json({ error: 'Access denied. You do not have permission to modify this menu item.' });
+      }
+    }
+
+    // Delete old image if it exists and is a local file
+    if (menuItem.image_url && menuItem.image_url.startsWith('/images/')) {
+      const oldImagePath = path.join(__dirname, 'public', menuItem.image_url);
+      try {
+        if (fs.existsSync(oldImagePath)) {
+          fs.unlinkSync(oldImagePath);
+        }
+      } catch (error) {
+        console.error('Error deleting old image:', error);
+        // Continue even if old image deletion fails
+      }
+    }
+
+    // Generate unique filename
+    const fileExtension = path.extname(req.file.originalname);
+    const fileName = `menu-item-${id}-${Date.now()}${fileExtension}`;
+    const filePath = path.join(__dirname, 'public', 'images', fileName);
+
+    // Ensure directory exists
+    const uploadDir = path.dirname(filePath);
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // Save file
+    fs.writeFileSync(filePath, req.file.buffer);
+
+    // Update menu item with new image URL
+    const imageUrl = `/images/${fileName}`;
+    const updatedItem = await MenuItem.update(id, { image_url: imageUrl });
+
+    res.json({ 
+      success: true, 
+      image_url: imageUrl,
+      menu_item: updatedItem,
+      message: 'Image uploaded successfully' 
+    });
+  } catch (error) {
+    console.error('Error uploading menu item image:', error);
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
+
+// Delete menu item image
+app.delete('/api/menu/:id/image', auth, requireCafeMembership, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get menu item to verify it exists and user has access
+    const menuItem = await MenuItem.getById(id);
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    // Verify cafe access (if cafe_id column exists)
+    if (menuItem.cafe_id && req.user.cafe_id && menuItem.cafe_id !== req.user.cafe_id) {
+      // Allow superadmin to access any cafe's menu items
+      if (req.user.role !== 'superadmin') {
+        return res.status(403).json({ error: 'Access denied. You do not have permission to modify this menu item.' });
+      }
+    }
+
+    // Delete image file if it exists and is a local file
+    if (menuItem.image_url && menuItem.image_url.startsWith('/images/')) {
+      const imagePath = path.join(__dirname, 'public', menuItem.image_url);
+      try {
+        if (fs.existsSync(imagePath)) {
+          fs.unlinkSync(imagePath);
+        }
+      } catch (error) {
+        console.error('Error deleting image file:', error);
+        // Continue even if file deletion fails
+      }
+    }
+
+    // Update menu item to remove image URL
+    const updatedItem = await MenuItem.update(id, { image_url: null });
+
+    res.json({ 
+      success: true, 
+      menu_item: updatedItem,
+      message: 'Image removed successfully' 
+    });
+  } catch (error) {
+    console.error('Error removing menu item image:', error);
+    res.status(500).json({ error: 'Failed to remove image' });
   }
 });
 
