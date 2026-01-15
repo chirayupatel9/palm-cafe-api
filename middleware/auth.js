@@ -28,7 +28,51 @@ const auth = async (req, res, next) => {
       return res.status(401).json({ error: 'Invalid token.' });
     }
 
-    req.user = user;
+    // Handle impersonation - if token contains impersonation data, apply it
+    if (decoded.impersonatedCafeId && decoded.impersonatedCafeSlug) {
+      // Verify original user is still a superadmin (security check)
+      if (user.role !== 'superadmin') {
+        return res.status(403).json({ 
+          error: 'Impersonation token invalid. Original user is not a Super Admin.' 
+        });
+      }
+
+      // Get cafe information for impersonation
+      const Cafe = require('../models/cafe');
+      const cafe = await Cafe.getById(decoded.impersonatedCafeId);
+      
+      if (!cafe || !cafe.is_active) {
+        return res.status(403).json({ 
+          error: 'Impersonation token invalid. Cafe not found or inactive.' 
+        });
+      }
+
+      // Attach impersonation context to request
+      req.user = user; // Original user (Super Admin)
+      
+      // Set effective cafe_id and role for impersonation (so existing routes work)
+      req.user.cafe_id = decoded.impersonatedCafeId;
+      req.user.cafe_slug = decoded.impersonatedCafeSlug;
+      req.user.cafe_name = cafe.name;
+      req.user.effective_role = decoded.impersonatedRole || 'admin'; // Store effective role
+      
+      req.impersonation = {
+        isImpersonating: true,
+        cafeId: decoded.impersonatedCafeId,
+        cafeSlug: decoded.impersonatedCafeSlug,
+        cafeName: cafe.name,
+        impersonatedRole: decoded.impersonatedRole || 'admin',
+        originalUserId: decoded.userId,
+        originalRole: user.role
+      };
+    } else {
+      // Normal authentication - no impersonation
+      req.user = user;
+      req.impersonation = {
+        isImpersonating: false
+      };
+    }
+
     next();
   } catch (error) {
     console.error('JWT verification error:', error.message);

@@ -27,6 +27,7 @@ const CafeDailyMetrics = require('./models/cafeDailyMetrics');
 const subscriptionService = require('./services/subscriptionService');
 const featureService = require('./services/featureService');
 const auditService = require('./services/auditService');
+const impersonationService = require('./services/impersonationService');
 const Feature = require('./models/feature');
 const bcrypt = require('bcryptjs');
 const { auth, adminAuth, chefAuth, JWT_SECRET } = require('./middleware/auth');
@@ -1209,6 +1210,179 @@ app.get('/api/superadmin/audit-logs', auth, requireSuperAdmin, async (req, res) 
   }
 });
 
+// ========================
+// Super Admin Impersonation Routes
+// ========================
+
+// Start impersonation (Super Admin only)
+app.post('/api/superadmin/impersonate-cafe', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { cafeSlug } = req.body;
+
+    if (!cafeSlug) {
+      return res.status(400).json({ error: 'Cafe slug is required' });
+    }
+
+    // Prevent nested impersonation
+    if (req.impersonation && req.impersonation.isImpersonating) {
+      return res.status(403).json({ error: 'Cannot impersonate while already impersonating' });
+    }
+
+    // Get cafe by slug
+    const cafe = await Cafe.getBySlug(cafeSlug);
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+
+    if (!cafe.is_active) {
+      return res.status(403).json({ error: 'Cannot impersonate inactive cafe' });
+    }
+
+    // Get IP address and user agent for audit
+    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || null;
+    const userAgent = req.headers['user-agent'] || null;
+
+    // Log impersonation start
+    await impersonationService.logImpersonationEvent(
+      req.user.id,
+      req.user.email,
+      cafe.id,
+      cafe.slug,
+      cafe.name,
+      impersonationService.ACTION_TYPES.IMPERSONATION_STARTED,
+      ipAddress,
+      userAgent
+    );
+
+    // Generate new JWT token with impersonation data
+    const now = Math.floor(Date.now() / 1000);
+    const impersonationToken = jwt.sign(
+      {
+        userId: req.user.id, // Original Super Admin ID
+        impersonatedCafeId: cafe.id,
+        impersonatedCafeSlug: cafe.slug,
+        impersonatedRole: 'admin', // Impersonate as cafe admin
+        originalRole: req.user.role,
+        isImpersonation: true,
+        iat: now,
+        exp: now + (24 * 60 * 60) // 24 hours
+      },
+      JWT_SECRET,
+      {
+        algorithm: 'HS256'
+      }
+    );
+
+    // Get cafe settings for context
+    const cafeSettings = await CafeSettings.getCurrent();
+
+    res.json({
+      success: true,
+      message: `Now impersonating ${cafe.name}`,
+      token: impersonationToken,
+      impersonation: {
+        cafeId: cafe.id,
+        cafeSlug: cafe.slug,
+        cafeName: cafe.name,
+        impersonatedRole: 'admin'
+      },
+      user: {
+        id: req.user.id,
+        username: req.user.username,
+        email: req.user.email,
+        role: 'admin', // Return admin role for UI
+        cafe_id: cafe.id,
+        cafe_slug: cafe.slug,
+        cafe_name: cafe.name
+      }
+    });
+  } catch (error) {
+    console.error('Error starting impersonation:', error);
+    res.status(500).json({ error: 'Failed to start impersonation' });
+  }
+});
+
+// Exit impersonation (Super Admin only)
+app.post('/api/superadmin/exit-impersonation', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    // Check if actually impersonating
+    if (!req.impersonation || !req.impersonation.isImpersonating) {
+      return res.status(400).json({ error: 'Not currently impersonating' });
+    }
+
+    // Get IP address and user agent for audit
+    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || null;
+    const userAgent = req.headers['user-agent'] || null;
+
+    // Log impersonation end
+    await impersonationService.logImpersonationEvent(
+      req.user.id,
+      req.user.email,
+      req.impersonation.cafeId,
+      req.impersonation.cafeSlug,
+      req.impersonation.cafeName,
+      impersonationService.ACTION_TYPES.IMPERSONATION_ENDED,
+      ipAddress,
+      userAgent
+    );
+
+    // Generate new JWT token without impersonation data (restore original)
+    const now = Math.floor(Date.now() / 1000);
+    const originalToken = jwt.sign(
+      {
+        userId: req.user.id,
+        iat: now,
+        exp: now + (24 * 60 * 60) // 24 hours
+      },
+      JWT_SECRET,
+      {
+        algorithm: 'HS256'
+      }
+    );
+
+    // Get original user with cafe info (should be null for superadmin)
+    const user = await User.findByIdWithCafe(req.user.id);
+
+    res.json({
+      success: true,
+      message: 'Impersonation ended. Restored to Super Admin context.',
+      token: originalToken,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        cafe_id: user.cafe_id,
+        cafe_slug: user.cafe_slug,
+        cafe_name: user.cafe_name
+      }
+    });
+  } catch (error) {
+    console.error('Error exiting impersonation:', error);
+    res.status(500).json({ error: 'Failed to exit impersonation' });
+  }
+});
+
+// Get impersonation audit log (Super Admin only)
+app.get('/api/superadmin/impersonation-audit-logs', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseInt(req.query.offset) || 0;
+    const superAdminId = req.query.super_admin_id ? parseInt(req.query.super_admin_id) : null;
+    
+    const auditLogs = await impersonationService.getImpersonationAuditLog(superAdminId, limit, offset);
+    
+    res.json({
+      auditLogs,
+      limit,
+      offset
+    });
+  } catch (error) {
+    console.error('Error fetching impersonation audit logs:', error);
+    res.status(500).json({ error: 'Failed to fetch impersonation audit logs' });
+  }
+});
+
 // DEPRECATED: Toggle a specific module for a cafe (Super Admin override)
 // Kept for backward compatibility
 app.post('/api/superadmin/cafes/:id/subscription/modules/:module/toggle', auth, requireSuperAdmin, async (req, res) => {
@@ -2281,17 +2455,43 @@ app.get('/api/auth/profile', auth, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    res.json({
-      user: { 
-        id: user.id, 
-        username: user.username, 
-        email: user.email, 
-        role: user.role,
-        cafe_id: user.cafe_id,
-        cafe_slug: user.cafe_slug,
-        cafe_name: user.cafe_name
-      }
-    });
+    // If impersonating, return impersonation context
+    if (req.impersonation && req.impersonation.isImpersonating) {
+      res.json({
+        user: { 
+          id: user.id, 
+          username: user.username, 
+          email: user.email, 
+          role: req.impersonation.impersonatedRole, // Return impersonated role
+          cafe_id: req.impersonation.cafeId,
+          cafe_slug: req.impersonation.cafeSlug,
+          cafe_name: req.impersonation.cafeName
+        },
+        impersonation: {
+          isImpersonating: true,
+          cafeId: req.impersonation.cafeId,
+          cafeSlug: req.impersonation.cafeSlug,
+          cafeName: req.impersonation.cafeName,
+          originalUserId: req.impersonation.originalUserId,
+          originalRole: req.impersonation.originalRole
+        }
+      });
+    } else {
+      res.json({
+        user: { 
+          id: user.id, 
+          username: user.username, 
+          email: user.email, 
+          role: user.role,
+          cafe_id: user.cafe_id,
+          cafe_slug: user.cafe_slug,
+          cafe_name: user.cafe_name
+        },
+        impersonation: {
+          isImpersonating: false
+        }
+      });
+    }
   } catch (error) {
     console.error('Profile error:', error);
     res.status(500).json({ error: 'Failed to get profile' });

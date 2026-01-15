@@ -26,6 +26,16 @@ const validateCafeAccess = async (req, res, next) => {
 
     // If user is authenticated, validate they have access to this cafe
     if (req.user) {
+      // Check if impersonating - if so, validate impersonated cafe matches
+      if (req.impersonation && req.impersonation.isImpersonating) {
+        if (req.impersonation.cafeId !== cafe.id) {
+          return res.status(403).json({ 
+            error: 'Access denied. Impersonation context does not match requested cafe.' 
+          });
+        }
+        return next();
+      }
+
       // Super Admin can access any cafe
       if (req.user.role === 'superadmin') {
         return next();
@@ -53,6 +63,11 @@ const requireCafeMembership = async (req, res, next) => {
   try {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    // Check if impersonating - if so, impersonated cafe context is valid
+    if (req.impersonation && req.impersonation.isImpersonating) {
+      return next();
     }
 
     // Super Admin doesn't need cafe membership
