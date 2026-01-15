@@ -369,8 +369,10 @@ class MenuItem {
         params.push(cafeId);
       }
       
-      query += ' ORDER BY m.featured_priority DESC, m.sort_order, m.name LIMIT ?';
-      params.push(limit);
+      // LIMIT must be an integer, not a parameter (MySQL limitation)
+      // limit is already validated as a positive integer by the caller
+      const safeLimit = parseInt(limit, 10);
+      query += ` ORDER BY m.featured_priority DESC, m.sort_order, m.name LIMIT ${safeLimit}`;
       
       const [rows] = await pool.execute(query, params);
       
