@@ -2448,9 +2448,53 @@ app.delete('/api/categories/:id', async (req, res) => {
   }
 });
 
-// Get all menu items
-// Supports both old pattern (no cafe) and new pattern (with cafe)
-app.get('/api/menu', auth, requireActiveSubscription, requireFeature('menu_management'), async (req, res) => {
+// Get all menu items (public endpoint for customers, also works for authenticated users)
+app.get('/api/menu', async (req, res) => {
+  try {
+    let cafeId = null;
+    
+    // Try to get cafeId from authenticated user first (if token provided)
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    if (token) {
+      try {
+        const jwt = require('jsonwebtoken');
+        const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+        const decoded = jwt.verify(token, JWT_SECRET, { clockTolerance: 600 });
+        const user = await User.findById(decoded.userId);
+        if (user) {
+          const userWithCafe = await User.findByIdWithCafe(user.id);
+          if (userWithCafe && userWithCafe.cafe_id) {
+            cafeId = userWithCafe.cafe_id;
+          }
+        }
+      } catch (error) {
+        // Token invalid or expired, continue as unauthenticated user
+      }
+    }
+    
+    // If no cafeId from user, get cafe slug from query param or use default
+    if (!cafeId) {
+      const cafeSlug = req.query.cafeSlug || 'default';
+      try {
+        const cafe = await Cafe.getBySlug(cafeSlug);
+        if (cafe) {
+          cafeId = cafe.id;
+        }
+      } catch (error) {
+        // Cafe might not exist, use null (will get all items if no cafe_id column)
+      }
+    }
+    
+    const menuItems = await MenuItem.getAll(cafeId);
+    res.json(menuItems);
+  } catch (error) {
+    console.error('Error fetching menu items:', error);
+    res.status(500).json({ error: 'Failed to fetch menu items' });
+  }
+});
+
+// Get all menu items (admin endpoint - requires auth)
+app.get('/api/admin/menu', auth, requireActiveSubscription, requireFeature('menu_management'), async (req, res) => {
   try {
     let cafeId = null;
     
@@ -2776,6 +2820,63 @@ app.get('/api/tax-settings/menu', async (req, res) => {
   } catch (error) {
     console.error('Error fetching tax settings for menu:', error);
     res.status(500).json({ error: 'Failed to fetch tax settings' });
+  }
+});
+
+// Get featured items for customer menu (public endpoint)
+app.get('/api/menu/featured', async (req, res) => {
+  try {
+    // Get cafe slug from query param or use default
+    const cafeSlug = req.query.cafeSlug || 'default';
+    
+    // Get cafe by slug
+    const cafe = await Cafe.getBySlug(cafeSlug);
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+
+    const cafeId = cafe.id;
+    const limit = parseInt(req.query.limit, 10) || 6;
+    
+    // Ensure limit is a valid positive integer
+    if (isNaN(limit) || limit < 1) {
+      return res.status(400).json({ error: 'Invalid limit parameter' });
+    }
+
+    // Get featured items using MenuItem model
+    const items = await MenuItem.getFeatured(cafeId, limit);
+
+    res.json({ items });
+  } catch (error) {
+    console.error('Error fetching featured items:', error);
+    res.status(500).json({ error: 'Failed to fetch featured items' });
+  }
+});
+
+// Get cafe public info for customer menu (public endpoint)
+app.get('/api/menu/public-info', async (req, res) => {
+  try {
+    // Get cafe slug from query param or use default
+    const cafeSlug = req.query.cafeSlug || 'default';
+    
+    // Get cafe by slug
+    const cafe = await Cafe.getBySlug(cafeSlug);
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+
+    // Return public cafe information
+    res.json({
+      name: cafe.name || '',
+      address: cafe.address || '',
+      phone: cafe.phone || '',
+      email: cafe.email || '',
+      website: cafe.website || '',
+      opening_hours: null // Can be added to cafe model if needed
+    });
+  } catch (error) {
+    console.error('Error fetching cafe public info:', error);
+    res.status(500).json({ error: 'Failed to fetch cafe public info' });
   }
 });
 

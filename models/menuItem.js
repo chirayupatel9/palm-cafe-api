@@ -26,6 +26,7 @@ class MenuItem {
           m.is_available,
           m.sort_order,
           m.image_url,
+          m.featured_priority,
           m.created_at,
           m.updated_at,
           c.name as category_name
@@ -53,7 +54,8 @@ class MenuItem {
       return rows.map(row => ({
         ...row,
         price: parseFloat(row.price),
-        sort_order: parseInt(row.sort_order)
+        sort_order: parseInt(row.sort_order),
+        featured_priority: row.featured_priority ? parseInt(row.featured_priority) : null
       }));
     } catch (error) {
       throw new Error(`Error fetching menu items: ${error.message}`);
@@ -148,7 +150,18 @@ class MenuItem {
   // Get menu item by ID
   static async getById(id) {
     try {
-      const [rows] = await pool.execute(`
+      // Check if featured_priority column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'menu_items' 
+        AND COLUMN_NAME = 'featured_priority'
+      `);
+      
+      const hasFeaturedPriority = columns.length > 0;
+      
+      let query = `
         SELECT 
           m.id,
           m.category_id,
@@ -161,10 +174,19 @@ class MenuItem {
           m.created_at,
           m.updated_at,
           c.name as category_name
+      `;
+      
+      if (hasFeaturedPriority) {
+        query += `, m.featured_priority`;
+      }
+      
+      query += `
         FROM menu_items m
         LEFT JOIN categories c ON m.category_id = c.id
         WHERE m.id = ?
-      `, [id]);
+      `;
+      
+      const [rows] = await pool.execute(query, [id]);
       
       if (rows.length === 0) {
         return null;
@@ -173,7 +195,8 @@ class MenuItem {
       return {
         ...rows[0],
         price: parseFloat(rows[0].price),
-        sort_order: parseInt(rows[0].sort_order)
+        sort_order: parseInt(rows[0].sort_order),
+        featured_priority: hasFeaturedPriority && rows[0].featured_priority ? parseInt(rows[0].featured_priority) : null
       };
     } catch (error) {
       throw new Error(`Error fetching menu item: ${error.message}`);
@@ -226,7 +249,7 @@ class MenuItem {
   // Update menu item
   static async update(id, menuItemData) {
     try {
-      const { category_id, name, description, price, sort_order, is_available, image_url } = menuItemData;
+      const { category_id, name, description, price, sort_order, is_available, image_url, featured_priority } = menuItemData;
       
       if (!category_id) {
         throw new Error('Category ID is required');
@@ -240,14 +263,39 @@ class MenuItem {
       const safeSortOrder = sort_order || 0;
       const safeIsAvailable = is_available !== undefined ? is_available : true;
       const safeImageUrl = image_url || null;
+      const safeFeaturedPriority = featured_priority !== undefined && featured_priority !== null && featured_priority !== '' 
+        ? parseInt(featured_priority) 
+        : null;
       
-      const [result] = await pool.execute(
-        'UPDATE menu_items SET category_id = ?, name = ?, description = ?, price = ?, sort_order = ?, is_available = ?, image_url = ? WHERE id = ?',
-        [safeCategoryId, safeName, safeDescription, safePrice, safeSortOrder, safeIsAvailable, safeImageUrl, id]
-      );
+      // Check if featured_priority column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'menu_items' 
+        AND COLUMN_NAME = 'featured_priority'
+      `);
       
-      if (result.affectedRows === 0) {
-        throw new Error('Menu item not found');
+      const hasFeaturedPriority = columns.length > 0;
+      
+      if (hasFeaturedPriority) {
+        const [result] = await pool.execute(
+          'UPDATE menu_items SET category_id = ?, name = ?, description = ?, price = ?, sort_order = ?, is_available = ?, image_url = ?, featured_priority = ? WHERE id = ?',
+          [safeCategoryId, safeName, safeDescription, safePrice, safeSortOrder, safeIsAvailable, safeImageUrl, safeFeaturedPriority, id]
+        );
+        
+        if (result.affectedRows === 0) {
+          throw new Error('Menu item not found');
+        }
+      } else {
+        const [result] = await pool.execute(
+          'UPDATE menu_items SET category_id = ?, name = ?, description = ?, price = ?, sort_order = ?, is_available = ?, image_url = ? WHERE id = ?',
+          [safeCategoryId, safeName, safeDescription, safePrice, safeSortOrder, safeIsAvailable, safeImageUrl, id]
+        );
+        
+        if (result.affectedRows === 0) {
+          throw new Error('Menu item not found');
+        }
       }
       
       return await this.getById(id);
@@ -268,6 +316,83 @@ class MenuItem {
       return { success: true };
     } catch (error) {
       throw new Error(`Error deleting menu item: ${error.message}`);
+    }
+  }
+
+  // Get featured menu items (ordered by priority)
+  static async getFeatured(cafeId = null, limit = 6) {
+    try {
+      // Check if featured_priority column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'menu_items' 
+        AND COLUMN_NAME = 'featured_priority'
+      `);
+      
+      const hasFeaturedPriority = columns.length > 0;
+      const hasCafeId = await this.hasCafeIdColumn();
+      
+      if (!hasFeaturedPriority) {
+        // If column doesn't exist, return empty array
+        return [];
+      }
+      
+      let query = `
+        SELECT 
+          m.id,
+          m.category_id,
+          m.name,
+          m.description,
+          m.price,
+          m.is_available,
+          m.sort_order,
+          m.image_url,
+          m.featured_priority,
+          c.name as category_name
+        FROM menu_items m
+        LEFT JOIN categories c ON m.category_id = c.id
+        WHERE m.is_available = TRUE
+        AND m.featured_priority IS NOT NULL
+      `;
+      
+      const params = [];
+      
+      if (hasCafeId && cafeId) {
+        query += ' AND m.cafe_id = ?';
+        params.push(cafeId);
+      }
+      
+      query += ' ORDER BY m.featured_priority DESC, m.sort_order, m.name LIMIT ?';
+      params.push(limit);
+      
+      const [rows] = await pool.execute(query, params);
+      
+      return rows.map(row => ({
+        ...row,
+        price: parseFloat(row.price),
+        sort_order: parseInt(row.sort_order),
+        featured_priority: parseInt(row.featured_priority)
+      }));
+    } catch (error) {
+      throw new Error(`Error fetching featured menu items: ${error.message}`);
+    }
+  }
+
+  // Helper to check if cafe_id column exists
+  static async hasCafeIdColumn() {
+    try {
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'menu_items' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      return columns.length > 0;
+    } catch (error) {
+      return false;
     }
   }
 
