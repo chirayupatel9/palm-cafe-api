@@ -50,6 +50,8 @@ class CafeSettings {
     return {
       cafe_name: 'Palm Cafe',
       logo_url: '/images/palm-cafe-logo.png',
+      hero_image_url: null,
+      promo_banner_image_url: null,
       address: '',
       phone: '',
       email: '',
@@ -141,6 +143,7 @@ class CafeSettings {
       
       // Extended columns that may not exist yet
       const extendedColumns = [
+        'hero_image_url', 'promo_banner_image_url',
         'show_kitchen_tab', 'show_customers_tab', 'show_payment_methods_tab', 
         'show_menu_tab', 'show_inventory_tab', 'show_history_tab', 'show_menu_images',
         'chef_show_kitchen_tab', 'chef_show_menu_tab', 'chef_show_inventory_tab', 
@@ -184,7 +187,9 @@ class CafeSettings {
           insertColumns.push(col);
           insertPlaceholders.push('?');
           
-          if (col.includes('show_') || col.includes('can_') || col.includes('enable_') || col.includes('auto_print_')) {
+          if (col === 'hero_image_url' || col === 'promo_banner_image_url') {
+            insertValues.push(settingsData[col] || null);
+          } else if (col.includes('show_') || col.includes('can_') || col.includes('enable_') || col.includes('auto_print_')) {
             insertValues.push(settingsData[col] !== false);
           } else if (col === 'default_printer_type') {
             insertValues.push(settingsData[col] || 'system');
@@ -333,6 +338,38 @@ class CafeSettings {
       return await this.update(updatedSettings);
     } catch (error) {
       throw new Error(`Error updating logo: ${error.message}`);
+    }
+  }
+
+  // Update hero image
+  static async updateHeroImage(heroImageUrl) {
+    try {
+      const currentSettings = await this.getCurrent();
+      const updatedSettings = {
+        ...currentSettings,
+        hero_image_url: heroImageUrl,
+        changed_by: 'admin'
+      };
+      
+      return await this.update(updatedSettings);
+    } catch (error) {
+      throw new Error(`Error updating hero image: ${error.message}`);
+    }
+  }
+
+  // Update promo banner image
+  static async updatePromoBannerImage(promoBannerImageUrl) {
+    try {
+      const currentSettings = await this.getCurrent();
+      const updatedSettings = {
+        ...currentSettings,
+        promo_banner_image_url: promoBannerImageUrl,
+        changed_by: 'admin'
+      };
+      
+      return await this.update(updatedSettings);
+    } catch (error) {
+      throw new Error(`Error updating promo banner image: ${error.message}`);
     }
   }
 }

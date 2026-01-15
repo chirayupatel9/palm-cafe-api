@@ -2880,6 +2880,104 @@ app.get('/api/menu/public-info', async (req, res) => {
   }
 });
 
+// Get cafe branding for customer menu (public endpoint)
+app.get('/api/menu/branding', async (req, res) => {
+  try {
+    // Get cafe slug from query param or use default
+    const cafeSlug = req.query.cafeSlug || 'default';
+    
+    // Get cafe by slug
+    const cafe = await Cafe.getBySlug(cafeSlug);
+    if (!cafe) {
+      return res.status(404).json({ error: 'Cafe not found' });
+    }
+
+    // Get cafe settings for branding images
+    let heroImageUrl = null;
+    let promoBannerImageUrl = null;
+
+    try {
+      // Check if cafe_settings table has cafe_id column
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'cafe_settings' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+
+      if (columns.length > 0) {
+        // Check if branding columns exist
+        const [brandingColumns] = await pool.execute(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_SCHEMA = DATABASE() 
+          AND TABLE_NAME = 'cafe_settings' 
+          AND COLUMN_NAME IN ('hero_image_url', 'promo_banner_image_url')
+        `);
+
+        const existingBrandingColumns = brandingColumns.map(col => col.COLUMN_NAME);
+
+        if (existingBrandingColumns.length > 0) {
+          const selectColumns = existingBrandingColumns.join(', ');
+          const [settings] = await pool.execute(
+            `SELECT ${selectColumns} FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1`,
+            [cafe.id]
+          );
+
+          if (settings.length > 0) {
+            if (existingBrandingColumns.includes('hero_image_url')) {
+              heroImageUrl = settings[0].hero_image_url || null;
+            }
+            if (existingBrandingColumns.includes('promo_banner_image_url')) {
+              promoBannerImageUrl = settings[0].promo_banner_image_url || null;
+            }
+          }
+        }
+      } else {
+        // Legacy: no cafe_id column, get from default settings
+        const [brandingColumns] = await pool.execute(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_SCHEMA = DATABASE() 
+          AND TABLE_NAME = 'cafe_settings' 
+          AND COLUMN_NAME IN ('hero_image_url', 'promo_banner_image_url')
+        `);
+
+        const existingBrandingColumns = brandingColumns.map(col => col.COLUMN_NAME);
+
+        if (existingBrandingColumns.length > 0) {
+          const selectColumns = existingBrandingColumns.join(', ');
+          const [settings] = await pool.execute(
+            `SELECT ${selectColumns} FROM cafe_settings WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1`
+          );
+
+          if (settings.length > 0) {
+            if (existingBrandingColumns.includes('hero_image_url')) {
+              heroImageUrl = settings[0].hero_image_url || null;
+            }
+            if (existingBrandingColumns.includes('promo_banner_image_url')) {
+              promoBannerImageUrl = settings[0].promo_banner_image_url || null;
+            }
+          }
+        }
+      }
+    } catch (settingsError) {
+      // Ignore settings errors, just return null values
+      console.warn('Error fetching cafe branding:', settingsError);
+    }
+
+    // Return branding information
+    res.json({
+      hero_image_url: heroImageUrl,
+      promo_banner_image_url: promoBannerImageUrl
+    });
+  } catch (error) {
+    console.error('Error fetching cafe branding:', error);
+    res.status(500).json({ error: 'Failed to fetch cafe branding' });
+  }
+});
+
 // Update tax settings
 app.put('/api/tax-settings', auth, adminAuth, async (req, res) => {
   try {
@@ -3164,6 +3262,128 @@ app.post('/api/cafe-settings/logo', auth, imageUpload.single('logo'), async (req
   } catch (error) {
     console.error('Error uploading logo:', error);
     res.status(500).json({ error: 'Failed to upload logo' });
+  }
+});
+
+// Upload cafe hero image
+app.post('/api/cafe-settings/hero-image', auth, imageUpload.single('hero_image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No hero image file uploaded' });
+    }
+
+    // Validate file type
+    if (!req.file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: 'Only image files are allowed' });
+    }
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (req.file.size > maxSize) {
+      return res.status(400).json({ error: 'Image size must be less than 5MB' });
+    }
+
+    // Generate unique filename
+    const fileExtension = path.extname(req.file.originalname);
+    const fileName = `cafe-hero-${Date.now()}${fileExtension}`;
+    const filePath = path.join(__dirname, 'public', 'images', fileName);
+
+    // Ensure directory exists
+    const uploadDir = path.dirname(filePath);
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // Save file
+    fs.writeFileSync(filePath, req.file.buffer);
+
+    // Update cafe settings with new hero image URL
+    const heroImageUrl = `/images/${fileName}`;
+    const updatedSettings = await CafeSettings.updateHeroImage(heroImageUrl);
+
+    res.json({ 
+      success: true, 
+      hero_image_url: heroImageUrl,
+      message: 'Hero image uploaded successfully' 
+    });
+  } catch (error) {
+    console.error('Error uploading hero image:', error);
+    res.status(500).json({ error: 'Failed to upload hero image' });
+  }
+});
+
+// Upload cafe promo banner image
+app.post('/api/cafe-settings/promo-banner-image', auth, imageUpload.single('promo_banner_image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No promo banner image file uploaded' });
+    }
+
+    // Validate file type
+    if (!req.file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: 'Only image files are allowed' });
+    }
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (req.file.size > maxSize) {
+      return res.status(400).json({ error: 'Image size must be less than 5MB' });
+    }
+
+    // Generate unique filename
+    const fileExtension = path.extname(req.file.originalname);
+    const fileName = `cafe-promo-banner-${Date.now()}${fileExtension}`;
+    const filePath = path.join(__dirname, 'public', 'images', fileName);
+
+    // Ensure directory exists
+    const uploadDir = path.dirname(filePath);
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // Save file
+    fs.writeFileSync(filePath, req.file.buffer);
+
+    // Update cafe settings with new promo banner image URL
+    const promoBannerImageUrl = `/images/${fileName}`;
+    const updatedSettings = await CafeSettings.updatePromoBannerImage(promoBannerImageUrl);
+
+    res.json({ 
+      success: true, 
+      promo_banner_image_url: promoBannerImageUrl,
+      message: 'Promo banner image uploaded successfully' 
+    });
+  } catch (error) {
+    console.error('Error uploading promo banner image:', error);
+    res.status(500).json({ error: 'Failed to upload promo banner image' });
+  }
+});
+
+// Remove cafe hero image
+app.delete('/api/cafe-settings/hero-image', auth, async (req, res) => {
+  try {
+    const updatedSettings = await CafeSettings.updateHeroImage(null);
+    res.json({ 
+      success: true, 
+      message: 'Hero image removed successfully' 
+    });
+  } catch (error) {
+    console.error('Error removing hero image:', error);
+    res.status(500).json({ error: 'Failed to remove hero image' });
+  }
+});
+
+// Remove cafe promo banner image
+app.delete('/api/cafe-settings/promo-banner-image', auth, async (req, res) => {
+  try {
+    const updatedSettings = await CafeSettings.updatePromoBannerImage(null);
+    res.json({ 
+      success: true, 
+      message: 'Promo banner image removed successfully' 
+    });
+  } catch (error) {
+    console.error('Error removing promo banner image:', error);
+    res.status(500).json({ error: 'Failed to remove promo banner image' });
   }
 });
 
