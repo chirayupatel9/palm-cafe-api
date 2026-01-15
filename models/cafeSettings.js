@@ -49,7 +49,7 @@ class CafeSettings {
   static getDefaultSettings() {
     return {
       cafe_name: 'Palm Cafe',
-      logo_url: '/images/palm-cafe-logo.png',
+      logo_url: null,
       hero_image_url: null,
       promo_banner_image_url: null,
       address: '',
@@ -174,7 +174,7 @@ class CafeSettings {
           } else if (col === 'cafe_name') {
             insertValues.push(settingsData.cafe_name);
           } else if (col === 'logo_url') {
-            insertValues.push(settingsData.logo_url || '/images/palm-cafe-logo.png');
+            insertValues.push(settingsData.logo_url || null);
           } else {
             insertValues.push(settingsData[col] || '');
           }

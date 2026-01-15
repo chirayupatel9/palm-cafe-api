@@ -3114,6 +3114,7 @@ app.get('/api/menu/branding', async (req, res) => {
     // Get cafe settings for branding images
     let heroImageUrl = null;
     let promoBannerImageUrl = null;
+    let logoUrl = null;
 
     try {
       // Check if cafe_settings table has cafe_id column
@@ -3132,7 +3133,7 @@ app.get('/api/menu/branding', async (req, res) => {
           FROM INFORMATION_SCHEMA.COLUMNS 
           WHERE TABLE_SCHEMA = DATABASE() 
           AND TABLE_NAME = 'cafe_settings' 
-          AND COLUMN_NAME IN ('hero_image_url', 'promo_banner_image_url')
+          AND COLUMN_NAME IN ('hero_image_url', 'promo_banner_image_url', 'logo_url')
         `);
 
         const existingBrandingColumns = brandingColumns.map(col => col.COLUMN_NAME);
@@ -3151,6 +3152,9 @@ app.get('/api/menu/branding', async (req, res) => {
             if (existingBrandingColumns.includes('promo_banner_image_url')) {
               promoBannerImageUrl = settings[0].promo_banner_image_url || null;
             }
+            if (existingBrandingColumns.includes('logo_url')) {
+              logoUrl = settings[0].logo_url || null;
+            }
           }
         }
       } else {
@@ -3160,7 +3164,7 @@ app.get('/api/menu/branding', async (req, res) => {
           FROM INFORMATION_SCHEMA.COLUMNS 
           WHERE TABLE_SCHEMA = DATABASE() 
           AND TABLE_NAME = 'cafe_settings' 
-          AND COLUMN_NAME IN ('hero_image_url', 'promo_banner_image_url')
+          AND COLUMN_NAME IN ('hero_image_url', 'promo_banner_image_url', 'logo_url')
         `);
 
         const existingBrandingColumns = brandingColumns.map(col => col.COLUMN_NAME);
@@ -3178,6 +3182,9 @@ app.get('/api/menu/branding', async (req, res) => {
             if (existingBrandingColumns.includes('promo_banner_image_url')) {
               promoBannerImageUrl = settings[0].promo_banner_image_url || null;
             }
+            if (existingBrandingColumns.includes('logo_url')) {
+              logoUrl = settings[0].logo_url || null;
+            }
           }
         }
       }
@@ -3189,7 +3196,8 @@ app.get('/api/menu/branding', async (req, res) => {
     // Return branding information
     res.json({
       hero_image_url: heroImageUrl,
-      promo_banner_image_url: promoBannerImageUrl
+      promo_banner_image_url: promoBannerImageUrl,
+      logo_url: logoUrl
     });
   } catch (error) {
     console.error('Error fetching cafe branding:', error);
@@ -3603,6 +3611,20 @@ app.delete('/api/cafe-settings/promo-banner-image', auth, async (req, res) => {
   } catch (error) {
     console.error('Error removing promo banner image:', error);
     res.status(500).json({ error: 'Failed to remove promo banner image' });
+  }
+});
+
+// Remove cafe logo
+app.delete('/api/cafe-settings/logo', auth, async (req, res) => {
+  try {
+    const updatedSettings = await CafeSettings.updateLogo(null);
+    res.json({ 
+      success: true, 
+      message: 'Logo removed successfully' 
+    });
+  } catch (error) {
+    console.error('Error removing logo:', error);
+    res.status(500).json({ error: 'Failed to remove logo' });
   }
 });
 
