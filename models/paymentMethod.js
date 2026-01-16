@@ -1,51 +1,118 @@
 const { pool } = require('../config/database');
 
 class PaymentMethod {
-  // Get all payment methods
-  static async getAll() {
+  // Get all payment methods (filtered by cafeId if provided)
+  static async getAll(cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'payment_methods' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
+      let query = `
         SELECT 
           id, name, code, is_active, display_order, 
           description, icon, created_at, updated_at
         FROM payment_methods
         WHERE is_active = TRUE
-        ORDER BY display_order ASC, name ASC
-      `);
-
+      `;
+      
+      const params = [];
+      
+      if (hasCafeId && cafeId) {
+        query += ' AND cafe_id = ?';
+        params.push(cafeId);
+      } else if (hasCafeId && !cafeId) {
+        // If cafe_id column exists but no cafeId provided, return empty (cafe-specific required)
+        return [];
+      }
+      
+      query += ' ORDER BY display_order ASC, name ASC';
+      
+      const [rows] = await pool.execute(query, params);
       return rows;
     } catch (error) {
       throw new Error(`Error fetching payment methods: ${error.message}`);
     }
   }
 
-  // Get all payment methods (including inactive - for admin)
-  static async getAllForAdmin() {
+  // Get all payment methods (including inactive - for admin, filtered by cafeId)
+  static async getAllForAdmin(cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'payment_methods' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
+      let query = `
         SELECT 
           id, name, code, is_active, display_order, 
           description, icon, created_at, updated_at
         FROM payment_methods
-        ORDER BY display_order ASC, name ASC
-      `);
-
+        WHERE 1=1
+      `;
+      
+      const params = [];
+      
+      if (hasCafeId && cafeId) {
+        query += ' AND cafe_id = ?';
+        params.push(cafeId);
+      } else if (hasCafeId && !cafeId) {
+        // If cafe_id column exists but no cafeId provided, return empty (cafe-specific required)
+        return [];
+      }
+      
+      query += ' ORDER BY display_order ASC, name ASC';
+      
+      const [rows] = await pool.execute(query, params);
       return rows;
     } catch (error) {
       throw new Error(`Error fetching payment methods: ${error.message}`);
     }
   }
 
-  // Get payment method by ID
-  static async getById(id) {
+  // Get payment method by ID (optionally filtered by cafeId)
+  static async getById(id, cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'payment_methods' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
+      let query = `
         SELECT 
           id, name, code, is_active, display_order, 
           description, icon, created_at, updated_at
         FROM payment_methods
         WHERE id = ?
-      `, [id]);
+      `;
+      
+      const params = [id];
+      
+      if (hasCafeId && cafeId) {
+        query += ' AND cafe_id = ?';
+        params.push(cafeId);
+      }
+      
+      const [rows] = await pool.execute(query, params);
 
       if (rows.length === 0) {
         return null;
@@ -57,16 +124,36 @@ class PaymentMethod {
     }
   }
 
-  // Get payment method by code
-  static async getByCode(code) {
+  // Get payment method by code (optionally filtered by cafeId)
+  static async getByCode(code, cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'payment_methods' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
+      let query = `
         SELECT 
           id, name, code, is_active, display_order, 
           description, icon, created_at, updated_at
         FROM payment_methods
         WHERE code = ? AND is_active = TRUE
-      `, [code]);
+      `;
+      
+      const params = [code];
+      
+      if (hasCafeId && cafeId) {
+        query += ' AND cafe_id = ?';
+        params.push(cafeId);
+      }
+      
+      const [rows] = await pool.execute(query, params);
 
       if (rows.length === 0) {
         return null;
@@ -82,20 +169,49 @@ class PaymentMethod {
   static async create(paymentMethodData) {
     try {
       const {
-        name, code, description, icon, display_order, is_active = true
+        name, code, description, icon, display_order, is_active = true, cafe_id
       } = paymentMethodData;
 
-      // Check if code already exists
-      const existing = await this.getByCode(code);
-      if (existing) {
-        throw new Error('Payment method code already exists');
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'payment_methods' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+
+      // Check if code already exists for this cafe
+      if (hasCafeId && cafe_id) {
+        const existing = await this.getByCode(code, cafe_id);
+        if (existing) {
+          throw new Error('Payment method code already exists for this cafe');
+        }
+      } else {
+        const existing = await this.getByCode(code);
+        if (existing) {
+          throw new Error('Payment method code already exists');
+        }
       }
 
-      const [result] = await pool.execute(`
-        INSERT INTO payment_methods (name, code, description, icon, display_order, is_active)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `, [name, code, description, icon, display_order || 0, is_active]);
+      let query, params;
+      if (hasCafeId && cafe_id) {
+        query = `
+          INSERT INTO payment_methods (name, code, description, icon, display_order, is_active, cafe_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `;
+        params = [name, code, description, icon, display_order || 0, is_active, cafe_id];
+      } else {
+        query = `
+          INSERT INTO payment_methods (name, code, description, icon, display_order, is_active)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `;
+        params = [name, code, description, icon, display_order || 0, is_active];
+      }
 
+      const [result] = await pool.execute(query, params);
       return await this.getById(result.insertId);
     } catch (error) {
       throw new Error(`Error creating payment method: ${error.message}`);
