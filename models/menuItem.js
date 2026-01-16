@@ -441,30 +441,90 @@ class MenuItem {
     try {
       await connection.beginTransaction();
       
+      // Check if cafe_id column exists
+      const [columns] = await connection.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'menu_items' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
       const results = [];
       for (const item of items) {
         try {
-          const { category_id, name, description, price, sort_order, image_url } = item;
+          const { category_id, name, description, price, sort_order, image_url, cafe_id } = item;
           
           if (!category_id) {
             throw new Error('Category ID is required');
           }
           
-          const [result] = await connection.execute(
-            'INSERT INTO menu_items (category_id, name, description, price, sort_order, image_url) VALUES (?, ?, ?, ?, ?, ?)',
-            [category_id, name.trim(), description ? description.trim() : '', parseFloat(price), sort_order || 0, image_url || null]
-          );
+          if (hasCafeId && !cafe_id) {
+            throw new Error('Cafe ID is required when cafe_id column exists');
+          }
+          
+          let query, params;
+          
+          if (hasCafeId) {
+            query = 'INSERT INTO menu_items (category_id, name, description, price, sort_order, image_url, cafe_id) VALUES (?, ?, ?, ?, ?, ?, ?)';
+            params = [
+              category_id, 
+              name.trim(), 
+              description ? description.trim() : '', 
+              parseFloat(price), 
+              sort_order || 0, 
+              image_url || null,
+              cafe_id
+            ];
+          } else {
+            query = 'INSERT INTO menu_items (category_id, name, description, price, sort_order, image_url) VALUES (?, ?, ?, ?, ?, ?)';
+            params = [
+              category_id, 
+              name.trim(), 
+              description ? description.trim() : '', 
+              parseFloat(price), 
+              sort_order || 0, 
+              image_url || null
+            ];
+          }
+          
+          const [result] = await connection.execute(query, params);
+          
+          console.log('[BULK IMPORT] Item inserted successfully', {
+            insertId: result.insertId,
+            name: item.name,
+            category_id: item.category_id,
+            cafe_id: item.cafe_id
+          });
           
           results.push({ success: true, item: { ...item, insertId: result.insertId } });
         } catch (error) {
+          console.error('[BULK IMPORT] Failed to insert item', {
+            name: item.name,
+            category_id: item.category_id,
+            cafe_id: item.cafe_id,
+            error: error.message,
+            stack: error.stack
+          });
           results.push({ success: false, item, error: error.message });
         }
       }
       
       await connection.commit();
+      console.log('[BULK IMPORT] Transaction committed', {
+        totalItems: items.length,
+        successCount: results.filter(r => r.success).length,
+        failureCount: results.filter(r => !r.success).length
+      });
       return results;
     } catch (error) {
       await connection.rollback();
+      console.error('[BULK IMPORT] Transaction rolled back', {
+        error: error.message,
+        stack: error.stack
+      });
       throw new Error(`Error during bulk import: ${error.message}`);
     } finally {
       connection.release();

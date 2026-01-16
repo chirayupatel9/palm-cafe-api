@@ -68,13 +68,17 @@ const zipUpload = multer({
     fileSize: 50 * 1024 * 1024 // 50MB limit for ZIP files (can contain images)
   },
   fileFilter: (req, file, cb) => {
-    // Allow ZIP files
-    if (file.mimetype === 'application/zip' ||
-        file.mimetype === 'application/x-zip-compressed' ||
-        file.originalname.endsWith('.zip')) {
+    // Be lenient with ZIP file detection - browsers may send different mimetypes
+    const isZip = file.originalname.toLowerCase().endsWith('.zip') ||
+                  file.mimetype === 'application/zip' ||
+                  file.mimetype === 'application/x-zip-compressed' ||
+                  file.mimetype === 'application/x-zip' ||
+                  file.mimetype.includes('zip');
+    
+    if (isZip) {
       cb(null, true);
     } else {
-      cb(new Error('Only ZIP files are allowed'));
+      cb(new Error(`Invalid file type. Expected ZIP file, got: ${file.mimetype || 'unknown'}`));
     }
   }
 });
@@ -2754,16 +2758,39 @@ app.get('/api/categories/with-counts', auth, async (req, res) => {
 });
 
 // Generate categories from menu items
-app.post('/api/categories/generate', async (req, res) => {
+app.post('/api/categories/generate', auth, async (req, res) => {
   try {
-    const categories = await Category.generateFromMenuItems();
+    // Get cafe_id from authenticated user (handles impersonation too)
+    let cafeId = null;
+    if (req.user) {
+      // Check if impersonating
+      if (req.impersonation && req.impersonation.isImpersonating) {
+        cafeId = req.impersonation.cafeId;
+      } else if (req.user.cafe_id) {
+        cafeId = req.user.cafe_id;
+      }
+    }
+    
+    // Super admin can optionally filter by cafe_id via query param
+    if (req.user && req.user.role === 'superadmin' && req.query.cafeId) {
+      cafeId = parseInt(req.query.cafeId, 10);
+    }
+    
+    if (!cafeId) {
+      return res.status(400).json({ 
+        error: 'Unable to determine cafe. Please ensure you are logged in and belong to a cafe.' 
+      });
+    }
+    
+    // Generate categories only for this cafe's menu items
+    const categories = await Category.generateFromMenuItems(cafeId);
     res.json({
       message: 'Categories generated successfully from menu items',
       categories: categories
     });
   } catch (error) {
     console.error('Error generating categories from menu items:', error);
-    res.status(500).json({ error: 'Failed to generate categories' });
+    res.status(500).json({ error: error.message || 'Failed to generate categories' });
   }
 });
 
@@ -2920,6 +2947,7 @@ app.get('/api/menu', async (req, res) => {
     let cafeId = null;
     
     // Try to get cafeId from authenticated user first (if token provided)
+    // Use auth middleware pattern but don't require it (for public access)
     const token = req.header('Authorization')?.replace('Bearer ', '');
     if (token) {
       try {
@@ -2929,8 +2957,13 @@ app.get('/api/menu', async (req, res) => {
         const user = await User.findById(decoded.userId);
         if (user) {
           const userWithCafe = await User.findByIdWithCafe(user.id);
-          if (userWithCafe && userWithCafe.cafe_id) {
-            cafeId = userWithCafe.cafe_id;
+          if (userWithCafe) {
+            // Check if impersonating (from impersonation service)
+            if (req.impersonation && req.impersonation.isImpersonating) {
+              cafeId = req.impersonation.cafeId;
+            } else if (userWithCafe.cafe_id) {
+              cafeId = userWithCafe.cafe_id;
+            }
           }
         }
       } catch (error) {
@@ -2951,10 +2984,22 @@ app.get('/api/menu', async (req, res) => {
       }
     }
     
+    console.log('[GET /api/menu] Fetching menu items', {
+      cafeId,
+      hasToken: !!token,
+      cafeSlug: req.query.cafeSlug
+    });
+    
     const menuItems = await MenuItem.getAll(cafeId);
+    
+    console.log('[GET /api/menu] Menu items fetched', {
+      cafeId,
+      itemCount: menuItems.length
+    });
+    
     res.json(menuItems);
   } catch (error) {
-    console.error('Error fetching menu items:', error);
+    console.error('[GET /api/menu] Error fetching menu items:', error);
     res.status(500).json({ error: 'Failed to fetch menu items' });
   }
 });
@@ -2962,14 +3007,23 @@ app.get('/api/menu', async (req, res) => {
 // Get all menu items (admin endpoint - requires auth)
 app.get('/api/admin/menu', auth, requireActiveSubscription, requireFeature('menu_management'), async (req, res) => {
   try {
+    // Get cafe_id from authenticated user (handles impersonation too)
     let cafeId = null;
-    
-    // Try to get cafeId from user if available
     if (req.user) {
-      const userWithCafe = await User.findByIdWithCafe(req.user.id);
-      if (userWithCafe && userWithCafe.cafe_id) {
-        cafeId = userWithCafe.cafe_id;
+      // Check if impersonating
+      if (req.impersonation && req.impersonation.isImpersonating) {
+        cafeId = req.impersonation.cafeId;
+      } else {
+        const userWithCafe = await User.findByIdWithCafe(req.user.id);
+        if (userWithCafe && userWithCafe.cafe_id) {
+          cafeId = userWithCafe.cafe_id;
+        }
       }
+    }
+    
+    // Super admin can optionally filter by cafe_id via query param
+    if (req.user && req.user.role === 'superadmin' && req.query.cafeId) {
+      cafeId = parseInt(req.query.cafeId, 10);
     }
     
     // If no cafeId and user is not superadmin, try to get from default cafe
@@ -2984,10 +3038,22 @@ app.get('/api/admin/menu', auth, requireActiveSubscription, requireFeature('menu
       }
     }
     
+    console.log('[GET /api/admin/menu] Fetching menu items', {
+      cafeId,
+      userId: req.user?.id,
+      impersonating: req.impersonation?.isImpersonating
+    });
+    
     const menuItems = await MenuItem.getAll(cafeId);
+    
+    console.log('[GET /api/admin/menu] Menu items fetched', {
+      cafeId,
+      itemCount: menuItems.length
+    });
+    
     res.json(menuItems);
   } catch (error) {
-    console.error('Error fetching menu items:', error);
+    console.error('[GET /api/admin/menu] Error fetching menu items:', error);
     res.status(500).json({ error: 'Failed to fetch menu items' });
   }
 });
@@ -3300,74 +3366,249 @@ app.post('/api/menu/import', auth, upload.single('file'), async (req, res) => {
 
         // Find or create category (scoped to this cafe)
         let categoryId = null;
-        if (row['Category']) {
-          const categoryName = row['Category'].toString().trim();
+        const categoryName = (row['Category'] || row['category'] || row['CATEGORY'] || '').toString().trim();
+        if (categoryName) {
           categoryId = categoryMap[categoryName.toLowerCase()];
           
           if (!categoryId) {
             // Create new category (scoped to this cafe)
-            const newCategory = {
-              name: categoryName,
-              description: '',
-              sort_order: categories.length + 1,
-              cafe_id: cafeId
-            };
-            
-            const createdCategory = await Category.create(newCategory);
-            categoryId = createdCategory.id;
-            categoryMap[categoryName.toLowerCase()] = categoryId;
-            categories.push(createdCategory);
+            try {
+              const newCategory = {
+                name: categoryName,
+                description: '',
+                sort_order: categories.length + 1,
+                cafe_id: cafeId
+              };
+              
+              const createdCategory = await Category.create(newCategory);
+              categoryId = createdCategory.id;
+              categoryMap[categoryName.toLowerCase()] = categoryId;
+              categories.push(createdCategory);
+              console.log('[MENU IMPORT] Created new category', { categoryId, name: categoryName, cafeId });
+            } catch (catError) {
+              // If duplicate entry error, try to find existing category (including inactive)
+              if (catError.message.includes('Duplicate entry') || catError.message.includes('UNIQUE constraint')) {
+                try {
+                  // Query database directly to find existing category (including inactive)
+                  const [existing] = await pool.execute(
+                    'SELECT id, name, is_active FROM categories WHERE name = ? AND cafe_id = ? LIMIT 1',
+                    [categoryName, cafeId]
+                  );
+                  
+                  if (existing.length > 0) {
+                    categoryId = existing[0].id;
+                    categoryMap[categoryName.toLowerCase()] = categoryId;
+                    
+                    // Reactivate if inactive
+                    if (!existing[0].is_active) {
+                      await pool.execute(
+                        'UPDATE categories SET is_active = TRUE WHERE id = ?',
+                        [categoryId]
+                      );
+                      console.log('[MENU IMPORT] Reactivated existing category', { categoryId, name: categoryName, cafeId });
+                    } else {
+                      console.log('[MENU IMPORT] Found existing category', { categoryId, name: categoryName, cafeId });
+                    }
+                  } else {
+                    // Category exists but belongs to different cafe - this shouldn't happen with UNIQUE constraint
+                    const errorMsg = `Row ${rowNumber}: Category "${categoryName}" already exists but couldn't be found for this cafe`;
+                    errors.push(errorMsg);
+                    if (i < 5) {
+                      console.error('[MENU IMPORT]', errorMsg);
+                    }
+                    continue;
+                  }
+                } catch (findError) {
+                  const errorMsg = `Row ${rowNumber}: Failed to find existing category "${categoryName}": ${findError.message}`;
+                  errors.push(errorMsg);
+                  if (i < 5) {
+                    console.error('[MENU IMPORT]', errorMsg, { findError });
+                  }
+                  continue;
+                }
+              } else {
+                const errorMsg = `Row ${rowNumber}: Failed to create category "${categoryName}": ${catError.message}`;
+                errors.push(errorMsg);
+                if (i < 5) {
+                  console.error('[MENU IMPORT]', errorMsg, { catError });
+                }
+                continue; // Skip this item if category creation fails
+              }
+            }
           }
+        } else {
+          const errorMsg = `Row ${rowNumber}: Category is required. Please provide a category name. Found columns: ${Object.keys(row).join(', ')}`;
+          errors.push(errorMsg);
+          if (i < 5) {
+            console.error('[MENU IMPORT]', errorMsg, { row });
+          }
+          continue;
         }
 
         // Create menu item
+        const priceNum = parseFloat(price);
+        if (isNaN(priceNum) || priceNum <= 0) {
+          const errorMsg = `Row ${rowNumber}: Invalid price "${price}". Price must be a positive number.`;
+          errors.push(errorMsg);
+          if (i < 5) {
+            console.error('[MENU IMPORT]', errorMsg);
+          }
+          continue;
+        }
+        
+        // Handle image URL from Excel
+        let imageUrl = null;
+        const imageValue = row['Image'] || row['image'] || row['IMAGE'] || '';
+        if (imageValue) {
+          const imageValueStr = imageValue.toString().trim();
+          // If it's a URL (starts with http:// or https://), use it directly
+          if (imageValueStr.startsWith('http://') || imageValueStr.startsWith('https://')) {
+            imageUrl = imageValueStr;
+          } else if (imageValueStr.startsWith('/')) {
+            // If it's a path starting with /, use it as is (e.g., /images/item.jpg)
+            imageUrl = imageValueStr;
+          } else if (imageValueStr) {
+            // If it's just a filename, assume it's in /images/ directory
+            imageUrl = `/images/${imageValueStr}`;
+          }
+        }
+        
         const menuItem = {
           category_id: categoryId,
-          name: row['Item Name'].toString().trim(),
-          description: row['Description'] ? row['Description'].toString().trim() : '',
-          price: parseFloat(row['Price']),
-          sort_order: row['Sort Order'] ? parseInt(row['Sort Order']) : 0,
+          name: itemName.toString().trim(),
+          description: (row['Description'] || row['description'] || row['DESCRIPTION'] || '').toString().trim(),
+          price: priceNum,
+          sort_order: row['Sort Order'] || row['sort_order'] || row['Sort Order'] ? parseInt(row['Sort Order'] || row['sort_order'] || row['Sort Order'] || 0) : 0,
+          image_url: imageUrl,
           cafe_id: cafeId
         };
 
         itemsToImport.push(menuItem);
       } catch (error) {
-        errors.push(`Row ${rowNumber}: ${error.message}`);
+        const errorMsg = `Row ${rowNumber}: ${error.message}`;
+        errors.push(errorMsg);
+        if (i < 5) {
+          console.error('[MENU IMPORT] Row processing error', { rowNumber, error: error.message, stack: error.stack, row });
+        }
       }
     }
+    
+    console.log('[MENU IMPORT] Processing complete', {
+      totalRows: menuData.length,
+      itemsToImport: itemsToImport.length,
+      errors: errors.length,
+      firstFewErrors: errors.slice(0, 10)
+    });
 
     // Import items
+    console.log('[MENU IMPORT] Importing items', {
+      cafeId,
+      itemCount: itemsToImport.length,
+      sampleItem: itemsToImport[0] ? {
+        name: itemsToImport[0].name,
+        category_id: itemsToImport[0].category_id,
+        cafe_id: itemsToImport[0].cafe_id
+      } : null
+    });
+    
     const importResults = await MenuItem.bulkImport(itemsToImport);
     
     const successCount = importResults.filter(r => r.success).length;
     const failureCount = importResults.filter(r => !r.success).length;
+    
+    const importErrors = importResults.filter(r => !r.success);
+    if (importErrors.length > 0) {
+      console.error('[MENU IMPORT] Import errors:', importErrors);
+    }
 
+    console.log('[MENU IMPORT] Import completed', {
+      cafeId,
+      successCount,
+      failureCount,
+      totalErrors: errors.length + importErrors.length,
+      itemsProcessed: itemsToImport.length
+    });
+    
+    // Verify items were actually created by fetching them
+    if (successCount > 0) {
+      try {
+        const createdItems = await MenuItem.getAll(cafeId);
+        console.log('[MENU IMPORT] Verification - Total items in database for cafe', {
+          cafeId,
+          totalItems: createdItems.length
+        });
+      } catch (verifyError) {
+        console.error('[MENU IMPORT] Error verifying imported items:', verifyError);
+      }
+    }
+
+    const allErrors = errors.concat(importResults.filter(r => !r.success).map(r => r.error));
+    
     res.json({
       message: `Import completed. ${successCount} items imported successfully, ${failureCount} failed.`,
       successCount,
       failureCount,
-      errors: errors.concat(importResults.filter(r => !r.success).map(r => r.error))
+      errors: allErrors.length > 0 ? allErrors : undefined,
+      cafeId: cafeId // Include cafeId in response for debugging
     });
 
   } catch (error) {
-    console.error('Error importing menu:', error);
-    res.status(500).json({ error: 'Failed to import menu' });
+    console.error('[MENU IMPORT] Error importing menu:', error);
+    console.error('[MENU IMPORT] Error stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Failed to import menu',
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
 // Import menu from ZIP file (Excel + images)
-app.post('/api/menu/import-zip', auth, requireActiveSubscription, requireFeature('menu_management'), zipUpload.single('file'), async (req, res) => {
+app.post('/api/menu/import-zip', auth, requireActiveSubscription, requireFeature('menu_management'), (req, res, next) => {
+  zipUpload.single('file')(req, res, (err) => {
+    if (err) {
+      // Handle multer errors (file size, file type, etc.)
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({ error: 'File too large. Maximum size is 50MB.' });
+        }
+        return res.status(400).json({ error: `Upload error: ${err.message}` });
+      }
+      // Handle fileFilter errors
+      return res.status(400).json({ error: err.message || 'Invalid file type' });
+    }
+    next();
+  });
+}, async (req, res) => {
   const tempDir = path.join(__dirname, 'temp', `import-${Date.now()}-${uuidv4()}`);
-  let extractedFiles = [];
   
   try {
+    console.log('[ZIP IMPORT] Starting import process', {
+      hasFile: !!req.file,
+      fileName: req.file?.originalname,
+      fileSize: req.file?.size,
+      mimeType: req.file?.mimetype
+    });
+    
     if (!req.file) {
-      return res.status(400).json({ error: 'No ZIP file uploaded' });
+      return res.status(400).json({ error: 'No ZIP file uploaded. Please select a ZIP file.' });
     }
 
-    // Validate file type
-    if (!req.file.mimetype.includes('zip') && !req.file.originalname.endsWith('.zip')) {
-      return res.status(400).json({ error: 'Only ZIP files are allowed' });
+    // Validate file type - be lenient with mimetype as browsers may send different types
+    const isValidZip = req.file.originalname.toLowerCase().endsWith('.zip') || 
+                       req.file.mimetype === 'application/zip' ||
+                       req.file.mimetype === 'application/x-zip-compressed' ||
+                       req.file.mimetype === 'application/x-zip' ||
+                       (req.file.mimetype && req.file.mimetype.includes('zip'));
+    
+    if (!isValidZip) {
+      console.error('[ZIP IMPORT] Invalid file type', {
+        fileName: req.file.originalname,
+        mimeType: req.file.mimetype
+      });
+      return res.status(400).json({ 
+        error: `Invalid file type. Expected ZIP file, got: ${req.file.mimetype || 'unknown'}. File name: ${req.file.originalname}` 
+      });
     }
 
     // Get cafe_id from authenticated user (handles impersonation too)
@@ -3410,8 +3651,16 @@ app.post('/api/menu/import-zip', auth, requireActiveSubscription, requireFeature
     }
 
     // Extract ZIP file
-    const zip = new AdmZip(req.file.buffer);
-    zip.extractAllTo(tempDir, true);
+    let zip;
+    try {
+      zip = new AdmZip(req.file.buffer);
+      zip.extractAllTo(tempDir, true);
+    } catch (zipError) {
+      console.error('Error extracting ZIP file:', zipError);
+      return res.status(400).json({ 
+        error: `Failed to extract ZIP file: ${zipError.message}. Please ensure the file is a valid ZIP archive.` 
+      });
+    }
 
     // Find Excel file (menu.xlsx or any .xlsx file)
     const files = fs.readdirSync(tempDir);
@@ -3478,25 +3727,82 @@ app.post('/api/menu/import-zip', auth, requireActiveSubscription, requireFeature
     const imagesDir = findImagesDir(tempDir);
     const imageMap = new Map(); // filename -> full path
 
-    if (imagesDir) {
-      const imageFiles = fs.readdirSync(imagesDir);
-      for (const imageFile of imageFiles) {
-        const imagePath = path.join(imagesDir, imageFile);
-        const stat = fs.statSync(imagePath);
-        if (stat.isFile()) {
-          // Store both original filename and lowercase for matching
-          imageMap.set(imageFile.toLowerCase(), imagePath);
-          imageMap.set(imageFile, imagePath);
+    console.log('[ZIP IMPORT] Images directory search', {
+      tempDir,
+      imagesDirFound: !!imagesDir,
+      imagesDirPath: imagesDir
+    });
+
+    // Function to add images from a directory to the map
+    const addImagesToMap = (dir) => {
+      try {
+        const imageFiles = fs.readdirSync(dir);
+        console.log('[ZIP IMPORT] Scanning directory for images', {
+          dir,
+          fileCount: imageFiles.length,
+          files: imageFiles.slice(0, 10)
+        });
+        
+        for (const imageFile of imageFiles) {
+          const imagePath = path.join(dir, imageFile);
+          const stat = fs.statSync(imagePath);
+          if (stat.isFile()) {
+            // Check if it's an image file by extension
+            const ext = path.extname(imageFile).toLowerCase();
+            const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
+            if (imageExtensions.includes(ext)) {
+              // Store both original filename and lowercase for matching
+              imageMap.set(imageFile.toLowerCase(), imagePath);
+              imageMap.set(imageFile, imagePath);
+              // Also store just the basename without extension for more flexible matching
+              const basename = path.basename(imageFile, ext);
+              if (basename !== imageFile) {
+                imageMap.set(basename.toLowerCase(), imagePath);
+                imageMap.set(basename, imagePath);
+              }
+            }
+          }
         }
+      } catch (error) {
+        console.error('[ZIP IMPORT] Error scanning directory', { dir, error: error.message });
       }
+    };
+
+    if (imagesDir) {
+      addImagesToMap(imagesDir);
+    } else {
+      // If no images directory found, check root directory for image files
+      console.log('[ZIP IMPORT] No images directory found, checking root directory');
+      addImagesToMap(tempDir);
+    }
+    
+    console.log('[ZIP IMPORT] Image map populated', {
+      imageMapSize: imageMap.size,
+      sampleKeys: Array.from(imageMap.keys()).slice(0, 10)
+    });
+    
+    if (imageMap.size === 0) {
+      console.warn('[ZIP IMPORT] No image files found in ZIP archive');
     }
 
     // Read Excel file
-    const workbook = XLSX.readFile(excelPath);
+    let workbook;
+    try {
+      workbook = XLSX.readFile(excelPath);
+    } catch (excelError) {
+      console.error('Error reading Excel file:', excelError);
+      return res.status(400).json({ 
+        error: `Failed to read Excel file: ${excelError.message}. Please ensure the file is a valid Excel (.xlsx) file.` 
+      });
+    }
+    
     const menuSheet = workbook.Sheets['Menu Items'] || workbook.Sheets[workbook.SheetNames[0]];
     
     if (!menuSheet) {
-      return res.status(400).json({ error: 'Menu Items sheet not found in Excel file' });
+      const availableSheets = workbook.SheetNames.join(', ');
+      return res.status(400).json({ 
+        error: `Menu Items sheet not found in Excel file. Available sheets: ${availableSheets || 'none'}` 
+      });
     }
 
     // Convert to JSON
@@ -3528,54 +3834,185 @@ app.post('/api/menu/import-zip', auth, requireActiveSubscription, requireFeature
       invalid: 0
     };
 
+    console.log('[ZIP IMPORT] Processing menu data', {
+      totalRows: menuData.length,
+      sampleRow: menuData[0] ? Object.keys(menuData[0]) : null,
+      sampleRowData: menuData[0] ? {
+        itemName: menuData[0]['Item Name'] || menuData[0]['item name'] || menuData[0]['name'] || menuData[0]['Name'],
+        image: menuData[0]['Image'] || menuData[0]['image'] || menuData[0]['IMAGE'] || 'NOT FOUND',
+        allKeys: Object.keys(menuData[0])
+      } : null,
+      imageMapSize: imageMap.size,
+      imageMapSample: Array.from(imageMap.keys()).slice(0, 5)
+    });
+
     for (let i = 0; i < menuData.length; i++) {
       const row = menuData[i];
       const rowNumber = i + 2; // Excel rows start at 1, but we have header
 
       try {
-        // Validate required fields
-        const itemName = row['Item Name'] || row['name'];
-        const price = row['Price'] || row['price'];
+        // Validate required fields - check multiple possible column names
+        const itemName = row['Item Name'] || row['item name'] || row['name'] || row['Name'];
+        const price = row['Price'] || row['price'] || row['PRICE'];
+        const category = row['Category'] || row['category'] || row['CATEGORY'];
         
         if (!itemName || !price) {
-          errors.push(`Row ${rowNumber}: Item Name and Price are required`);
+          const errorMsg = `Row ${rowNumber}: Item Name and Price are required. Found columns: ${Object.keys(row).join(', ')}`;
+          errors.push(errorMsg);
+          if (i < 5) { // Log first 5 errors for debugging
+            console.error('[ZIP IMPORT]', errorMsg, { row });
+          }
           continue;
         }
 
         // Find or create category (scoped to this cafe)
         let categoryId = null;
-        const categoryName = (row['Category'] || row['category'] || '').toString().trim();
+        const categoryName = (row['Category'] || row['category'] || row['CATEGORY'] || '').toString().trim();
         if (categoryName) {
           categoryId = categoryMap[categoryName.toLowerCase()];
           
           if (!categoryId) {
             // Create new category (scoped to this cafe)
-            const newCategory = {
-              name: categoryName,
-              description: '',
-              sort_order: categories.length + 1,
-              cafe_id: cafeId
-            };
-            
-            const createdCategory = await Category.create(newCategory);
-            categoryId = createdCategory.id;
-            categoryMap[categoryName.toLowerCase()] = categoryId;
-            categories.push(createdCategory);
+            try {
+              const newCategory = {
+                name: categoryName,
+                description: '',
+                sort_order: categories.length + 1,
+                cafe_id: cafeId
+              };
+              
+              const createdCategory = await Category.create(newCategory);
+              categoryId = createdCategory.id;
+              categoryMap[categoryName.toLowerCase()] = categoryId;
+              categories.push(createdCategory);
+              console.log('[ZIP IMPORT] Created new category', { categoryId, name: categoryName, cafeId });
+            } catch (catError) {
+              // If duplicate entry error, try to find existing category (including inactive)
+              if (catError.message.includes('Duplicate entry') || catError.message.includes('UNIQUE constraint')) {
+                try {
+                  // Query database directly to find existing category (including inactive)
+                  const [existing] = await pool.execute(
+                    'SELECT id, name, is_active FROM categories WHERE name = ? AND cafe_id = ? LIMIT 1',
+                    [categoryName, cafeId]
+                  );
+                  
+                  if (existing.length > 0) {
+                    categoryId = existing[0].id;
+                    categoryMap[categoryName.toLowerCase()] = categoryId;
+                    
+                    // Reactivate if inactive
+                    if (!existing[0].is_active) {
+                      await pool.execute(
+                        'UPDATE categories SET is_active = TRUE WHERE id = ?',
+                        [categoryId]
+                      );
+                      console.log('[ZIP IMPORT] Reactivated existing category', { categoryId, name: categoryName, cafeId });
+                    } else {
+                      console.log('[ZIP IMPORT] Found existing category', { categoryId, name: categoryName, cafeId });
+                    }
+                  } else {
+                    // Category exists but belongs to different cafe - this shouldn't happen with UNIQUE constraint
+                    const errorMsg = `Row ${rowNumber}: Category "${categoryName}" already exists but couldn't be found for this cafe`;
+                    errors.push(errorMsg);
+                    if (i < 5) {
+                      console.error('[ZIP IMPORT]', errorMsg);
+                    }
+                    continue;
+                  }
+                } catch (findError) {
+                  const errorMsg = `Row ${rowNumber}: Failed to find existing category "${categoryName}": ${findError.message}`;
+                  errors.push(errorMsg);
+                  if (i < 5) {
+                    console.error('[ZIP IMPORT]', errorMsg, { findError });
+                  }
+                  continue;
+                }
+              } else {
+                const errorMsg = `Row ${rowNumber}: Failed to create category "${categoryName}": ${catError.message}`;
+                errors.push(errorMsg);
+                if (i < 5) {
+                  console.error('[ZIP IMPORT]', errorMsg, { catError });
+                }
+                continue; // Skip this item if category creation fails
+              }
+            }
           }
         } else {
-          errors.push(`Row ${rowNumber}: Category is required`);
+          const errorMsg = `Row ${rowNumber}: Category is required. Please provide a category name. Found columns: ${Object.keys(row).join(', ')}`;
+          errors.push(errorMsg);
+          if (i < 5) {
+            console.error('[ZIP IMPORT]', errorMsg, { row });
+          }
           continue;
         }
 
         // Handle image
         let imageUrl = null;
-        const imageFilename = row['Image'] || row['image'];
+        let imageFilename = row['Image'] || row['image'] || row['IMAGE'];
         
-        if (imageFilename) {
+        // If Image column is empty, try to auto-match by row index
+        if (!imageFilename || !imageFilename.toString().trim()) {
+          // Get sorted list of image filenames from map (only actual image files, not basenames)
+          const imageKeys = Array.from(imageMap.keys()).filter(key => {
+            const ext = path.extname(key).toLowerCase();
+            return ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
+          });
+          
+          // Sort to get consistent ordering (image-10.jpg, image-11.jpg, etc.)
+          imageKeys.sort((a, b) => {
+            // Extract numbers from filenames for proper numeric sorting
+            const numA = parseInt(a.match(/\d+/)?.[0] || '0');
+            const numB = parseInt(b.match(/\d+/)?.[0] || '0');
+            return numA - numB;
+          });
+          
+          // Try to match by index - images are named image-10.jpg, image-11.jpg, etc.
+          // Row 2 (index 0) should match image-10.jpg, Row 3 (index 1) should match image-11.jpg, etc.
+          if (imageKeys.length > 0 && i < imageKeys.length) {
+            // Direct index match
+            const matchedKey = imageKeys[i];
+            if (matchedKey) {
+              imageFilename = matchedKey;
+              console.log('[ZIP IMPORT] Auto-matched image by row index', {
+                rowNumber,
+                rowIndex: i,
+                matchedFilename: imageFilename,
+                totalImages: imageKeys.length
+              });
+            }
+          }
+        }
+        
+        if (imageFilename && imageFilename.toString().trim()) {
           const imageFilenameStr = imageFilename.toString().trim();
           
-          // Try to find image in ZIP
-          const imagePath = imageMap.get(imageFilenameStr) || imageMap.get(imageFilenameStr.toLowerCase());
+          if (i < 3) {
+            console.log('[ZIP IMPORT] Looking for image', {
+              rowNumber,
+              imageFilename: imageFilenameStr,
+              imageMapSize: imageMap.size,
+              imageMapKeys: Array.from(imageMap.keys()).slice(0, 10)
+            });
+          }
+          
+          // Try to find image in ZIP - check multiple variations
+          let imagePath = imageMap.get(imageFilenameStr) || 
+                         imageMap.get(imageFilenameStr.toLowerCase()) ||
+                         imageMap.get(imageFilenameStr.toUpperCase());
+          
+          // Also try with path separators normalized
+          if (!imagePath) {
+            const normalizedName = imageFilenameStr.replace(/\\/g, '/');
+            imagePath = imageMap.get(normalizedName) || 
+                       imageMap.get(normalizedName.toLowerCase());
+          }
+          
+          // Try just the filename if it includes a path
+          if (!imagePath && imageFilenameStr.includes('/')) {
+            const justFilename = path.basename(imageFilenameStr);
+            imagePath = imageMap.get(justFilename) || 
+                       imageMap.get(justFilename.toLowerCase());
+          }
           
           if (imagePath && fs.existsSync(imagePath)) {
             try {
@@ -3603,57 +4040,164 @@ app.post('/api/menu/import-zip', auth, requireActiveSubscription, requireFeature
                   const targetPath = path.join(uploadDir, uniqueFileName);
                   
                   // Copy image to public/images directory
-                  fs.copyFileSync(imagePath, targetPath);
-                  
-                  imageUrl = `/images/${uniqueFileName}`;
-                  imageStats.attached++;
+                  try {
+                    fs.copyFileSync(imagePath, targetPath);
+                    console.log('[ZIP IMPORT] Image copied successfully', {
+                      rowNumber,
+                      from: imagePath,
+                      to: targetPath,
+                      fileExists: fs.existsSync(targetPath)
+                    });
+                    
+                    imageUrl = `/images/${uniqueFileName}`;
+                    imageStats.attached++;
+                    console.log('[ZIP IMPORT] Image attached successfully', {
+                      rowNumber,
+                      originalFilename: imageFilenameStr,
+                      savedAs: uniqueFileName,
+                      imageUrl
+                    });
+                  } catch (copyError) {
+                    console.error('[ZIP IMPORT] Failed to copy image', {
+                      rowNumber,
+                      error: copyError.message,
+                      from: imagePath,
+                      to: targetPath
+                    });
+                    errors.push(`Row ${rowNumber}: Failed to copy image "${imageFilenameStr}": ${copyError.message}`);
+                    imageStats.invalid++;
+                  }
                 }
               }
             } catch (imageError) {
-              errors.push(`Row ${rowNumber}: Error processing image "${imageFilenameStr}": ${imageError.message}`);
+              const errorMsg = `Row ${rowNumber}: Error processing image "${imageFilenameStr}": ${imageError.message}`;
+              errors.push(errorMsg);
               imageStats.invalid++;
+              console.error('[ZIP IMPORT]', errorMsg, { imageError: imageError.message, stack: imageError.stack });
               // Continue without image
             }
           } else {
             // Image file not found in ZIP
-            errors.push(`Row ${rowNumber}: Image file "${imageFilenameStr}" not found in ZIP archive`);
+            const errorMsg = `Row ${rowNumber}: Image file "${imageFilenameStr}" not found in ZIP archive. Available images: ${Array.from(imageMap.keys()).slice(0, 5).join(', ')}${imageMap.size > 5 ? '...' : ''}`;
+            errors.push(errorMsg);
             imageStats.missing++;
+            if (i < 5 || imageMap.size === 0) {
+              console.error('[ZIP IMPORT]', errorMsg, {
+                imageFilename: imageFilenameStr,
+                imageMapSize: imageMap.size,
+                imageMapKeys: Array.from(imageMap.keys()).slice(0, 10),
+                searchedVariations: [
+                  imageFilenameStr,
+                  imageFilenameStr.toLowerCase(),
+                  imageFilenameStr.toUpperCase(),
+                  path.basename(imageFilenameStr)
+                ]
+              });
+            }
             // Continue without image
           }
+        } else {
+          // No image filename in Excel row
+          if (i < 3) {
+            console.log('[ZIP IMPORT] No image column value for row', { rowNumber, rowKeys: Object.keys(row) });
+          }
+        }
+
+        // Validate price
+        const priceNum = parseFloat(price);
+        if (isNaN(priceNum) || priceNum <= 0) {
+          const errorMsg = `Row ${rowNumber}: Invalid price "${price}". Price must be a positive number.`;
+          errors.push(errorMsg);
+          if (i < 5) {
+            console.error('[ZIP IMPORT]', errorMsg);
+          }
+          continue;
         }
 
         // Create menu item
         const menuItem = {
           category_id: categoryId,
           name: itemName.toString().trim(),
-          description: (row['Description'] || row['description'] || '').toString().trim(),
-          price: parseFloat(price),
-          sort_order: row['Sort Order'] || row['sort_order'] ? parseInt(row['Sort Order'] || row['sort_order']) : 0,
+          description: (row['Description'] || row['description'] || row['DESCRIPTION'] || '').toString().trim(),
+          price: priceNum,
+          sort_order: row['Sort Order'] || row['sort_order'] || row['Sort Order'] ? parseInt(row['Sort Order'] || row['sort_order'] || row['Sort Order'] || 0) : 0,
           image_url: imageUrl,
           cafe_id: cafeId
         };
 
+        if (i < 3) {
+          console.log('[ZIP IMPORT] Menu item prepared', {
+            rowNumber,
+            name: menuItem.name,
+            imageUrl: menuItem.image_url,
+            hasImageUrl: !!menuItem.image_url,
+            imageUrlValue: menuItem.image_url || 'NULL'
+          });
+        }
+
         itemsToImport.push(menuItem);
       } catch (error) {
-        errors.push(`Row ${rowNumber}: ${error.message}`);
-      }
-    }
-
-    // Import items using bulk import (but we need to update it to handle cafe_id)
-    // For now, create items individually to ensure cafe_id is set
-    const importResults = [];
-    for (const item of itemsToImport) {
-      try {
-        const createdItem = await MenuItem.create(item);
-        importResults.push({ success: true, item: createdItem });
-      } catch (error) {
-        importResults.push({ success: false, item, error: error.message });
-        errors.push(`Failed to create item "${item.name}": ${error.message}`);
+        const errorMsg = `Row ${rowNumber}: ${error.message}`;
+        errors.push(errorMsg);
+        if (i < 5) {
+          console.error('[ZIP IMPORT] Row processing error', { rowNumber, error: error.message, stack: error.stack, row });
+        }
       }
     }
     
+    console.log('[ZIP IMPORT] Processing complete', {
+      totalRows: menuData.length,
+      itemsToImport: itemsToImport.length,
+      errors: errors.length,
+      firstFewErrors: errors.slice(0, 10)
+    });
+
+    // Import items using bulk import
+    console.log('[ZIP IMPORT] Importing items', {
+      cafeId,
+      itemCount: itemsToImport.length,
+      sampleItem: itemsToImport[0] ? {
+        name: itemsToImport[0].name,
+        category_id: itemsToImport[0].category_id,
+        cafe_id: itemsToImport[0].cafe_id
+      } : null
+    });
+    
+    const importResults = await MenuItem.bulkImport(itemsToImport);
+    
     const successCount = importResults.filter(r => r.success).length;
     const failureCount = importResults.filter(r => !r.success).length;
+    
+    const importErrors = importResults.filter(r => !r.success);
+    if (importErrors.length > 0) {
+      console.error('[ZIP IMPORT] Import errors:', importErrors);
+      importErrors.forEach(err => {
+        errors.push(`Failed to create item "${err.item?.name || 'unknown'}": ${err.error}`);
+      });
+    }
+    
+    console.log('[ZIP IMPORT] Import completed', {
+      cafeId,
+      successCount,
+      failureCount,
+      totalErrors: errors.length,
+      itemsProcessed: itemsToImport.length
+    });
+    
+    // Verify items were actually created by fetching them
+    if (successCount > 0) {
+      try {
+        const createdItems = await MenuItem.getAll(cafeId);
+        console.log('[ZIP IMPORT] Verification - Total items in database for cafe', {
+          cafeId,
+          totalItems: createdItems.length
+        });
+      } catch (verifyError) {
+        console.error('[ZIP IMPORT] Error verifying imported items:', verifyError);
+      }
+    }
+
+    const allErrors = errors.length > 0 ? errors : undefined;
 
     res.json({
       message: `Import completed. ${successCount} items imported successfully, ${failureCount} failed.`,
@@ -3664,12 +4208,18 @@ app.post('/api/menu/import-zip', auth, requireActiveSubscription, requireFeature
         missing: imageStats.missing,
         invalid: imageStats.invalid
       },
-      errors: errors.length > 0 ? errors : undefined
+      errors: allErrors,
+      cafeId: cafeId // Include cafeId in response for debugging
     });
 
   } catch (error) {
-    console.error('Error importing menu from ZIP:', error);
-    res.status(500).json({ error: 'Failed to import menu: ' + error.message });
+    console.error('[ZIP IMPORT] Error importing menu from ZIP:', error);
+    console.error('[ZIP IMPORT] Error stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Failed to import menu: ' + error.message,
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   } finally {
     // Cleanup temp directory
     try {
