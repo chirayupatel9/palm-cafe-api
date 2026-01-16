@@ -30,7 +30,7 @@ async function migrateMultiCafeSupport() {
       CREATE TABLE IF NOT EXISTS cafes (
         id INT AUTO_INCREMENT PRIMARY KEY,
         slug VARCHAR(100) NOT NULL UNIQUE,
-        name VARCHAR(200) NOT NULL,
+        name VARCHAR(200) DEFAULT NULL,
         description TEXT,
         logo_url VARCHAR(500),
         address TEXT,
@@ -51,13 +51,15 @@ async function migrateMultiCafeSupport() {
     
     let defaultCafeId;
     if (existingCafes.length === 0) {
-      // Create default cafe
+      // Create default cafe for migration purposes
+      // This will be updated by admin during setup
       const [result] = await connection.execute(`
         INSERT INTO cafes (slug, name, description, is_active)
-        VALUES ('default', 'Default Cafe', 'Default cafe for existing data', TRUE)
+        VALUES ('default', NULL, 'Default cafe for existing data migration', TRUE)
       `);
       defaultCafeId = result.insertId;
       console.log('✅ Default cafe created with ID:', defaultCafeId);
+      console.log('⚠️  Note: Cafe name should be set during onboarding');
     } else {
       defaultCafeId = existingCafes[0].id;
       console.log('ℹ️  Using existing default cafe with ID:', defaultCafeId);

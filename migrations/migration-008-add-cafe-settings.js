@@ -32,8 +32,8 @@ async function migrateCafeSettings() {
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS cafe_settings (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        cafe_name VARCHAR(200) NOT NULL DEFAULT 'Our Cafe',
-        logo_url VARCHAR(500) DEFAULT '/images/palm-cafe-logo.png',
+        cafe_name VARCHAR(200) DEFAULT NULL,
+        logo_url VARCHAR(500) DEFAULT NULL,
         address TEXT,
         phone VARCHAR(50),
         email VARCHAR(200),
@@ -51,7 +51,7 @@ async function migrateCafeSettings() {
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS cafe_settings_history (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        cafe_name VARCHAR(200) NOT NULL,
+        cafe_name VARCHAR(200),
         logo_url VARCHAR(500),
         address TEXT,
         phone VARCHAR(50),
@@ -64,20 +64,6 @@ async function migrateCafeSettings() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
     console.log('✅ Cafe settings history table created');
-
-    // Insert default cafe settings
-    await connection.execute(`
-      INSERT INTO cafe_settings (cafe_name, logo_url, address, phone, email, website, opening_hours, description) 
-      VALUES ('Our Cafe', '/images/palm-cafe-logo.png', '123 Main Street, City', '+91 98765 43210', 'info@ourcafe.com', 'https://ourcafe.com', 'Mon-Sun: 8:00 AM - 10:00 PM', 'Welcome to Our Cafe - Your perfect dining destination')
-    `);
-    console.log('✅ Default cafe settings inserted');
-
-    // Insert default cafe settings history
-    await connection.execute(`
-      INSERT INTO cafe_settings_history (cafe_name, logo_url, address, phone, email, website, opening_hours, description, changed_by) 
-      VALUES ('Our Cafe', '/images/palm-cafe-logo.png', '123 Main Street, City', '+91 98765 43210', 'info@ourcafe.com', 'https://ourcafe.com', 'Mon-Sun: 8:00 AM - 10:00 PM', 'Welcome to Our Cafe - Your perfect dining destination', 'system')
-    `);
-    console.log('✅ Default cafe settings history inserted');
 
     console.log('🎉 Cafe settings migration completed successfully!');
 

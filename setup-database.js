@@ -267,8 +267,8 @@ async function createDatabase() {
     await connection.query(`
       CREATE TABLE IF NOT EXISTS cafe_settings (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        cafe_name VARCHAR(200) NOT NULL DEFAULT 'Our Cafe',
-        logo_url VARCHAR(500) DEFAULT '/images/palm-cafe-logo.png',
+        cafe_name VARCHAR(200) DEFAULT NULL,
+        logo_url VARCHAR(500) DEFAULT NULL,
         address TEXT,
         phone VARCHAR(50),
         email VARCHAR(200),
@@ -390,19 +390,8 @@ async function createDatabase() {
       console.log('✅ Default currency settings inserted');
     }
 
-    // Insert default cafe settings
-    const [existingCafeSettings] = await connection.query('SELECT COUNT(*) as count FROM cafe_settings');
-    if (existingCafeSettings[0].count === 0) {
-      await connection.query(`
-        INSERT INTO cafe_settings (cafe_name, logo_url, address, phone, email, website, opening_hours, description, show_kitchen_tab, show_customers_tab, show_payment_methods_tab, show_menu_tab, show_inventory_tab, show_history_tab) 
-        VALUES ('Our Cafe', '/images/palm-cafe-logo.png', '123 Main Street, City', '+91 98765 43210', 'info@ourcafe.com', 'https://ourcafe.com', 'Mon-Sun: 8:00 AM - 10:00 PM', 'Welcome to Our Cafe - Your perfect dining destination', TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
-      `);
-      await connection.query(`
-        INSERT INTO cafe_settings_history (cafe_name, logo_url, address, phone, email, website, opening_hours, description, show_kitchen_tab, show_customers_tab, show_payment_methods_tab, show_menu_tab, show_inventory_tab, show_history_tab, changed_by) 
-        VALUES ('Our Cafe', '/images/palm-cafe-logo.png', '123 Main Street, City', '+91 98765 43210', 'info@ourcafe.com', 'https://ourcafe.com', 'Mon-Sun: 8:00 AM - 10:00 PM', 'Welcome to Our Cafe - Your perfect dining destination', TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, 'system')
-      `);
-      console.log('✅ Default cafe settings inserted');
-    }
+    // Note: cafe_settings will be created through onboarding or admin setup
+    // No default insert needed - cafe name should be set by user during onboarding
 
     // Insert default payment methods
     const [existingPaymentMethods] = await connection.query('SELECT COUNT(*) as count FROM payment_methods');
