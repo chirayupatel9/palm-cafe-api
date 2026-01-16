@@ -6,6 +6,7 @@ const { v4: uuidv4 } = require('uuid');
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
+const AdmZip = require('adm-zip');
 const jwt = require('jsonwebtoken');
 const morgan = require('morgan');
 const http = require('http');
@@ -56,6 +57,24 @@ const upload = multer({
       cb(null, true);
     } else {
       cb(new Error('Only Excel files are allowed'));
+    }
+  }
+});
+
+// Configure multer for ZIP file uploads
+const zipUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB limit for ZIP files (can contain images)
+  },
+  fileFilter: (req, file, cb) => {
+    // Allow ZIP files
+    if (file.mimetype === 'application/zip' ||
+        file.mimetype === 'application/x-zip-compressed' ||
+        file.originalname.endsWith('.zip')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only ZIP files are allowed'));
     }
   }
 });
@@ -2998,31 +3017,87 @@ app.delete('/api/menu/:id', async (req, res) => {
 });
 
 // Export menu to Excel
-app.get('/api/menu/export', async (req, res) => {
+app.get('/api/menu/export', auth, async (req, res) => {
   try {
-    const menuItems = await MenuItem.getAll();
-    const categories = await Category.getAll();
+    // Get cafe_id from authenticated user (handles impersonation too)
+    let cafeId = null;
+    if (req.user) {
+      // Check if impersonating
+      if (req.impersonation && req.impersonation.isImpersonating) {
+        cafeId = req.impersonation.cafeId;
+      } else if (req.user.cafe_id) {
+        cafeId = req.user.cafe_id;
+      }
+    }
+    
+    // Super admin can optionally filter by cafe_id via query param
+    if (req.user && req.user.role === 'superadmin' && req.query.cafeId) {
+      cafeId = parseInt(req.query.cafeId, 10);
+    }
+    
+    // If no cafeId and not superadmin, try to get from default cafe
+    if (!cafeId) {
+      try {
+        const defaultCafe = await Cafe.getBySlug('default');
+        if (defaultCafe) {
+          cafeId = defaultCafe.id;
+        }
+      } catch (error) {
+        // Cafe might not exist
+      }
+    }
+    
+    if (!cafeId) {
+      return res.status(400).json({ 
+        error: 'Unable to determine cafe. Please ensure you are logged in and belong to a cafe.' 
+      });
+    }
+    
+    // Get current menu items for this cafe
+    const menuItems = await MenuItem.getAll(cafeId);
+    
+    if (!menuItems || menuItems.length === 0) {
+      return res.status(404).json({ 
+        error: 'No menu items found for this cafe. Please add menu items before exporting.' 
+      });
+    }
+    
+    // Get all categories, then filter to only those used by exported menu items
+    const allCategories = await Category.getAll();
+    const usedCategoryIds = new Set(menuItems.map(item => item.category_id).filter(Boolean));
+    const categories = allCategories.filter(cat => usedCategoryIds.has(cat.id));
     
     // Create workbook and worksheet
     const workbook = XLSX.utils.book_new();
     
-    // Menu items worksheet
-    const menuData = menuItems.map(item => ({
-      'Category': item.category_name || 'Uncategorized',
-      'Item Name': item.name,
-      'Description': item.description || '',
-      'Price': item.price,
-      'Sort Order': item.sort_order
-    }));
+    // Menu items worksheet - include Image column for ZIP import compatibility
+    const menuData = menuItems.map(item => {
+      // Extract image filename from image_url if present
+      let imageFilename = '';
+      if (item.image_url) {
+        // Extract filename from path like /images/menu-item-123.jpg
+        const imagePath = item.image_url;
+        imageFilename = path.basename(imagePath);
+      }
+      
+      return {
+        'Category': item.category_name || 'Uncategorized',
+        'Item Name': item.name,
+        'Description': item.description || '',
+        'Price': item.price,
+        'Image': imageFilename,
+        'Sort Order': item.sort_order || 0
+      };
+    });
     
     const menuWorksheet = XLSX.utils.json_to_sheet(menuData);
     XLSX.utils.book_append_sheet(workbook, menuWorksheet, 'Menu Items');
     
-    // Categories worksheet
+    // Categories worksheet - only include categories used by exported items
     const categoryData = categories.map(cat => ({
       'Category Name': cat.name,
       'Description': cat.description || '',
-      'Sort Order': cat.sort_order
+      'Sort Order': cat.sort_order || 0
     }));
     
     const categoryWorksheet = XLSX.utils.json_to_sheet(categoryData);
@@ -3038,7 +3113,7 @@ app.get('/api/menu/export', async (req, res) => {
     res.send(buffer);
   } catch (error) {
     console.error('Error exporting menu:', error);
-    res.status(500).json({ error: 'Failed to export menu' });
+    res.status(500).json({ error: 'Failed to export menu: ' + error.message });
   }
 });
 
@@ -3138,6 +3213,332 @@ app.post('/api/menu/import', upload.single('file'), async (req, res) => {
   } catch (error) {
     console.error('Error importing menu:', error);
     res.status(500).json({ error: 'Failed to import menu' });
+  }
+});
+
+// Import menu from ZIP file (Excel + images)
+app.post('/api/menu/import-zip', auth, requireActiveSubscription, requireFeature('menu_management'), zipUpload.single('file'), async (req, res) => {
+  const tempDir = path.join(__dirname, 'temp', `import-${Date.now()}-${uuidv4()}`);
+  let extractedFiles = [];
+  
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No ZIP file uploaded' });
+    }
+
+    // Validate file type
+    if (!req.file.mimetype.includes('zip') && !req.file.originalname.endsWith('.zip')) {
+      return res.status(400).json({ error: 'Only ZIP files are allowed' });
+    }
+
+    // Get cafe_id from authenticated user (handles impersonation too)
+    let cafeId = null;
+    if (req.user) {
+      // Check if impersonating
+      if (req.impersonation && req.impersonation.isImpersonating) {
+        cafeId = req.impersonation.cafeId;
+      } else if (req.user.cafe_id) {
+        cafeId = req.user.cafe_id;
+      }
+    }
+    
+    // Super admin can optionally filter by cafe_id via query param
+    if (req.user && req.user.role === 'superadmin' && req.query.cafeId) {
+      cafeId = parseInt(req.query.cafeId, 10);
+    }
+    
+    // If no cafeId, try to get from default cafe
+    if (!cafeId) {
+      try {
+        const defaultCafe = await Cafe.getBySlug('default');
+        if (defaultCafe) {
+          cafeId = defaultCafe.id;
+        }
+      } catch (error) {
+        // Cafe might not exist
+      }
+    }
+    
+    if (!cafeId) {
+      return res.status(400).json({ 
+        error: 'Unable to determine cafe. Please ensure you are logged in and belong to a cafe.' 
+      });
+    }
+
+    // Create temp directory
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+
+    // Extract ZIP file
+    const zip = new AdmZip(req.file.buffer);
+    zip.extractAllTo(tempDir, true);
+
+    // Find Excel file (menu.xlsx or any .xlsx file)
+    const files = fs.readdirSync(tempDir);
+    let excelFile = null;
+    let excelPath = null;
+    
+    // Look for menu.xlsx first, then any .xlsx file
+    for (const file of files) {
+      if (file.toLowerCase() === 'menu.xlsx' || file.toLowerCase().endsWith('.xlsx')) {
+        excelFile = file;
+        excelPath = path.join(tempDir, file);
+        break;
+      }
+    }
+
+    // Also check subdirectories
+    if (!excelFile) {
+      const findExcelInDir = (dir) => {
+        const items = fs.readdirSync(dir);
+        for (const item of items) {
+          const itemPath = path.join(dir, item);
+          const stat = fs.statSync(itemPath);
+          if (stat.isDirectory()) {
+            const found = findExcelInDir(itemPath);
+            if (found) return found;
+          } else if (item.toLowerCase().endsWith('.xlsx')) {
+            return itemPath;
+          }
+        }
+        return null;
+      };
+      excelPath = findExcelInDir(tempDir);
+      if (excelPath) {
+        excelFile = path.basename(excelPath);
+      }
+    }
+
+    if (!excelFile || !excelPath) {
+      return res.status(400).json({ error: 'Excel file (menu.xlsx) not found in ZIP archive' });
+    }
+
+    // Find images directory
+    const findImagesDir = (dir) => {
+      const items = fs.readdirSync(dir);
+      for (const item of items) {
+        const itemPath = path.join(dir, item);
+        const stat = fs.statSync(itemPath);
+        if (stat.isDirectory() && item.toLowerCase() === 'images') {
+          return itemPath;
+        }
+      }
+      // Check subdirectories
+      for (const item of items) {
+        const itemPath = path.join(dir, item);
+        const stat = fs.statSync(itemPath);
+        if (stat.isDirectory()) {
+          const found = findImagesDir(itemPath);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const imagesDir = findImagesDir(tempDir);
+    const imageMap = new Map(); // filename -> full path
+
+    if (imagesDir) {
+      const imageFiles = fs.readdirSync(imagesDir);
+      for (const imageFile of imageFiles) {
+        const imagePath = path.join(imagesDir, imageFile);
+        const stat = fs.statSync(imagePath);
+        if (stat.isFile()) {
+          // Store both original filename and lowercase for matching
+          imageMap.set(imageFile.toLowerCase(), imagePath);
+          imageMap.set(imageFile, imagePath);
+        }
+      }
+    }
+
+    // Read Excel file
+    const workbook = XLSX.readFile(excelPath);
+    const menuSheet = workbook.Sheets['Menu Items'] || workbook.Sheets[workbook.SheetNames[0]];
+    
+    if (!menuSheet) {
+      return res.status(400).json({ error: 'Menu Items sheet not found in Excel file' });
+    }
+
+    // Convert to JSON
+    const menuData = XLSX.utils.sheet_to_json(menuSheet);
+    
+    if (menuData.length === 0) {
+      return res.status(400).json({ error: 'No data found in Menu Items sheet' });
+    }
+
+    // Get existing categories for mapping
+    const categories = await Category.getAll();
+    const categoryMap = {};
+    categories.forEach(cat => {
+      categoryMap[cat.name.toLowerCase()] = cat.id;
+    });
+
+    // Ensure images directory exists
+    const uploadDir = path.join(__dirname, 'public', 'images');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // Process menu items
+    const itemsToImport = [];
+    const errors = [];
+    const imageStats = {
+      attached: 0,
+      missing: 0,
+      invalid: 0
+    };
+
+    for (let i = 0; i < menuData.length; i++) {
+      const row = menuData[i];
+      const rowNumber = i + 2; // Excel rows start at 1, but we have header
+
+      try {
+        // Validate required fields
+        const itemName = row['Item Name'] || row['name'];
+        const price = row['Price'] || row['price'];
+        
+        if (!itemName || !price) {
+          errors.push(`Row ${rowNumber}: Item Name and Price are required`);
+          continue;
+        }
+
+        // Find or create category
+        let categoryId = null;
+        const categoryName = (row['Category'] || row['category'] || '').toString().trim();
+        if (categoryName) {
+          categoryId = categoryMap[categoryName.toLowerCase()];
+          
+          if (!categoryId) {
+            // Create new category
+            const newCategory = {
+              name: categoryName,
+              description: '',
+              sort_order: categories.length + 1
+            };
+            
+            const createdCategory = await Category.create(newCategory);
+            categoryId = createdCategory.id;
+            categoryMap[categoryName.toLowerCase()] = categoryId;
+            categories.push(createdCategory);
+          }
+        } else {
+          errors.push(`Row ${rowNumber}: Category is required`);
+          continue;
+        }
+
+        // Handle image
+        let imageUrl = null;
+        const imageFilename = row['Image'] || row['image'];
+        
+        if (imageFilename) {
+          const imageFilenameStr = imageFilename.toString().trim();
+          
+          // Try to find image in ZIP
+          const imagePath = imageMap.get(imageFilenameStr) || imageMap.get(imageFilenameStr.toLowerCase());
+          
+          if (imagePath && fs.existsSync(imagePath)) {
+            try {
+              // Validate image file
+              const imageBuffer = fs.readFileSync(imagePath);
+              const imageSize = imageBuffer.length;
+              const maxSize = 5 * 1024 * 1024; // 5MB
+              
+              if (imageSize > maxSize) {
+                errors.push(`Row ${rowNumber}: Image "${imageFilenameStr}" exceeds 5MB limit`);
+                imageStats.invalid++;
+                // Continue without image
+              } else {
+                // Validate file extension
+                const ext = path.extname(imageFilenameStr).toLowerCase();
+                const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+                
+                if (!allowedExtensions.includes(ext)) {
+                  errors.push(`Row ${rowNumber}: Image "${imageFilenameStr}" has invalid extension. Allowed: ${allowedExtensions.join(', ')}`);
+                  imageStats.invalid++;
+                  // Continue without image
+                } else {
+                  // Generate unique filename
+                  const uniqueFileName = `menu-item-${Date.now()}-${i}-${uuidv4()}${ext}`;
+                  const targetPath = path.join(uploadDir, uniqueFileName);
+                  
+                  // Copy image to public/images directory
+                  fs.copyFileSync(imagePath, targetPath);
+                  
+                  imageUrl = `/images/${uniqueFileName}`;
+                  imageStats.attached++;
+                }
+              }
+            } catch (imageError) {
+              errors.push(`Row ${rowNumber}: Error processing image "${imageFilenameStr}": ${imageError.message}`);
+              imageStats.invalid++;
+              // Continue without image
+            }
+          } else {
+            // Image file not found in ZIP
+            errors.push(`Row ${rowNumber}: Image file "${imageFilenameStr}" not found in ZIP archive`);
+            imageStats.missing++;
+            // Continue without image
+          }
+        }
+
+        // Create menu item
+        const menuItem = {
+          category_id: categoryId,
+          name: itemName.toString().trim(),
+          description: (row['Description'] || row['description'] || '').toString().trim(),
+          price: parseFloat(price),
+          sort_order: row['Sort Order'] || row['sort_order'] ? parseInt(row['Sort Order'] || row['sort_order']) : 0,
+          image_url: imageUrl,
+          cafe_id: cafeId
+        };
+
+        itemsToImport.push(menuItem);
+      } catch (error) {
+        errors.push(`Row ${rowNumber}: ${error.message}`);
+      }
+    }
+
+    // Import items using bulk import (but we need to update it to handle cafe_id)
+    // For now, create items individually to ensure cafe_id is set
+    const importResults = [];
+    for (const item of itemsToImport) {
+      try {
+        const createdItem = await MenuItem.create(item);
+        importResults.push({ success: true, item: createdItem });
+      } catch (error) {
+        importResults.push({ success: false, item, error: error.message });
+        errors.push(`Failed to create item "${item.name}": ${error.message}`);
+      }
+    }
+    
+    const successCount = importResults.filter(r => r.success).length;
+    const failureCount = importResults.filter(r => !r.success).length;
+
+    res.json({
+      message: `Import completed. ${successCount} items imported successfully, ${failureCount} failed.`,
+      successCount,
+      failureCount,
+      imageStats: {
+        attached: imageStats.attached,
+        missing: imageStats.missing,
+        invalid: imageStats.invalid
+      },
+      errors: errors.length > 0 ? errors : undefined
+    });
+
+  } catch (error) {
+    console.error('Error importing menu from ZIP:', error);
+    res.status(500).json({ error: 'Failed to import menu: ' + error.message });
+  } finally {
+    // Cleanup temp directory
+    try {
+      if (fs.existsSync(tempDir)) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    } catch (cleanupError) {
+      console.error('Error cleaning up temp directory:', cleanupError);
+    }
   }
 });
 
@@ -4220,10 +4621,27 @@ app.post('/api/invoices', auth, async (req, res) => {
       }
     }
 
-    // Check if customer exists or create new one
+    // Get cafe_id from authenticated user
+    let cafeId = null;
+    if (req.user) {
+      // Check if impersonating
+      if (req.impersonation && req.impersonation.isImpersonating) {
+        cafeId = req.impersonation.cafeId;
+      } else if (req.user.cafe_id) {
+        cafeId = req.user.cafe_id;
+      }
+    }
+    
+    if (!cafeId) {
+      return res.status(400).json({ 
+        error: 'Unable to determine cafe. Please ensure you are logged in and belong to a cafe.' 
+      });
+    }
+
+    // Check if customer exists or create new one (scoped to this cafe)
     let customer = null;
     if (customerPhone || customerName) {
-      customer = await Customer.findByEmailOrPhone(customerName, customerPhone);
+      customer = await Customer.findByEmailOrPhone(customerName, customerPhone, cafeId);
       
       if (!customer && customerPhone) {
         // Create new customer if phone number provided
@@ -4233,7 +4651,8 @@ app.post('/api/invoices', auth, async (req, res) => {
           email: customerEmail || null,
           address: null,
           date_of_birth: null,
-          notes: 'Auto-created from order'
+          notes: 'Auto-created from order',
+          cafe_id: cafeId
         });
       }
     }
@@ -4277,11 +4696,11 @@ app.post('/api/invoices', auth, async (req, res) => {
       }
     }
 
-    // Get cafe_id from order, user, or default cafe
-    let cafeId = null;
+    // cafeId is already set above from authenticated user
+    // If order has cafe_id, use that instead (should match, but just in case)
     if (createdOrder && createdOrder.cafe_id) {
       cafeId = createdOrder.cafe_id;
-    } else if (req.user && req.user.cafe_id) {
+    } else if (!cafeId && req.user && req.user.cafe_id) {
       cafeId = req.user.cafe_id;
     } else {
       // Try to get default cafe
@@ -4842,10 +5261,28 @@ app.post('/api/customer/orders', async (req, res) => {
     const pointsDiscount = pointsRedeemedNum * 0.1; // 1 point = 0.1 INR
     const total = subtotal + taxCalculation.taxAmount + tipAmountNum - pointsDiscount;
 
-    // Check if customer exists or create new one
+    // Get cafe_id from cafe slug or query param (for public customer orders)
+    let cafeId = null;
+    const cafeSlug = req.query.cafeSlug || req.body.cafeSlug || 'default';
+    try {
+      const cafe = await Cafe.getBySlug(cafeSlug);
+      if (cafe) {
+        cafeId = cafe.id;
+      }
+    } catch (error) {
+      console.warn('[POST /api/customer/orders] Could not find cafe by slug:', cafeSlug);
+    }
+    
+    if (!cafeId) {
+      return res.status(400).json({ 
+        error: 'Unable to determine cafe. Please provide a valid cafe slug.' 
+      });
+    }
+
+    // Check if customer exists or create new one (scoped to this cafe)
     let customer = null;
     if (customerPhone || customerName) {
-      customer = await Customer.findByEmailOrPhone(customerName, customerPhone);
+      customer = await Customer.findByEmailOrPhone(customerName, customerPhone, cafeId);
       
       if (!customer && customerPhone) {
         // Create new customer if phone number provided
@@ -4855,7 +5292,8 @@ app.post('/api/customer/orders', async (req, res) => {
           email: customerEmail || null,
           address: null,
           date_of_birth: null,
-          notes: 'Auto-created from customer order'
+          notes: 'Auto-created from customer order',
+          cafe_id: cafeId
         });
       }
     }
@@ -5110,10 +5548,53 @@ app.post('/api/orders/:id/print', auth, async (req, res) => {
 
 // Customer Management Routes
 
+// Get customer statistics (MUST be before /api/customers/:id to avoid route conflict)
+app.get('/api/customers/statistics', auth, async (req, res) => {
+  try {
+    // Get cafe_id from authenticated user (handles impersonation too)
+    let cafeId = null;
+    if (req.user) {
+      // Check if impersonating
+      if (req.impersonation && req.impersonation.isImpersonating) {
+        cafeId = req.impersonation.cafeId;
+      } else if (req.user.cafe_id) {
+        cafeId = req.user.cafe_id;
+      }
+    }
+    
+    // Super admin can optionally filter by cafe_id via query param
+    if (req.user && req.user.role === 'superadmin' && req.query.cafeId) {
+      cafeId = parseInt(req.query.cafeId, 10);
+    }
+    
+    const statistics = await Customer.getStatistics(cafeId);
+    res.json(statistics);
+  } catch (error) {
+    console.error('Error fetching customer statistics:', error);
+    res.status(500).json({ error: 'Failed to fetch customer statistics' });
+  }
+});
+
 // Get all customers
 app.get('/api/customers', auth, async (req, res) => {
   try {
-    const customers = await Customer.getAll();
+    // Get cafe_id from authenticated user (handles impersonation too)
+    let cafeId = null;
+    if (req.user) {
+      // Check if impersonating
+      if (req.impersonation && req.impersonation.isImpersonating) {
+        cafeId = req.impersonation.cafeId;
+      } else if (req.user.cafe_id) {
+        cafeId = req.user.cafe_id;
+      }
+    }
+    
+    // Super admin can optionally filter by cafe_id via query param
+    if (req.user && req.user.role === 'superadmin' && req.query.cafeId) {
+      cafeId = parseInt(req.query.cafeId, 10);
+    }
+    
+    const customers = await Customer.getAll(cafeId);
     res.json(customers);
   } catch (error) {
     console.error('Error fetching customers:', error);
@@ -5142,13 +5623,26 @@ app.get('/api/customers/:id', auth, async (req, res) => {
 // Search customers by phone for login (POST with encrypted payload)
 app.post('/api/customer/login', async (req, res) => {
   try {
-    const { phone } = req.body;
+    const { phone, cafeSlug } = req.body;
     
     if (!phone) {
       return res.status(400).json({ error: 'Phone number is required' });
     }
     
-    const customer = await Customer.findByEmailOrPhone(null, phone);
+    // Get cafe_id from cafe slug (for public customer login)
+    let cafeId = null;
+    const slug = cafeSlug || req.query.cafeSlug || 'default';
+    try {
+      const cafe = await Cafe.getBySlug(slug);
+      if (cafe) {
+        cafeId = cafe.id;
+      }
+    } catch (error) {
+      console.warn('[POST /api/customer/login] Could not find cafe by slug:', slug);
+    }
+    
+    // Find customer scoped to this cafe
+    const customer = await Customer.findByEmailOrPhone(null, phone, cafeId);
     
     if (customer) {
       // Return customer data without sensitive information like phone number
@@ -5180,14 +5674,32 @@ app.post('/api/customer/login', async (req, res) => {
 // Register new customer (public endpoint)
 app.post('/api/customer/register', async (req, res) => {
   try {
-    const { name, email, phone, address, date_of_birth, notes } = req.body;
+    const { name, email, phone, address, date_of_birth, notes, cafeSlug } = req.body;
     
     if (!name || !phone) {
       return res.status(400).json({ error: 'Customer name and phone number are required' });
     }
 
-    // Check if customer already exists
-    const existingCustomer = await Customer.findByEmailOrPhone(email, phone);
+    // Get cafe_id from cafe slug (for public customer registration)
+    let cafeId = null;
+    const slug = cafeSlug || req.query.cafeSlug || 'default';
+    try {
+      const cafe = await Cafe.getBySlug(slug);
+      if (cafe) {
+        cafeId = cafe.id;
+      }
+    } catch (error) {
+      console.warn('[POST /api/customer/register] Could not find cafe by slug:', slug);
+    }
+    
+    if (!cafeId) {
+      return res.status(400).json({ 
+        error: 'Unable to determine cafe. Please provide a valid cafe slug.' 
+      });
+    }
+
+    // Check if customer already exists (scoped to this cafe)
+    const existingCustomer = await Customer.findByEmailOrPhone(email, phone, cafeId);
     if (existingCustomer) {
       return res.status(400).json({ error: 'Customer with this phone number already exists' });
     }
@@ -5198,14 +5710,15 @@ app.post('/api/customer/register', async (req, res) => {
       phone: phone.trim(),
       address: address ? address.trim() : null,
       date_of_birth: date_of_birth || null,
-      notes: notes ? notes.trim() : null
+      notes: notes ? notes.trim() : null,
+      cafe_id: cafeId
     };
 
     const customer = await Customer.create(customerData);
     res.status(201).json(customer);
   } catch (error) {
     console.error('Error creating customer:', error);
-    res.status(500).json({ error: 'Failed to create customer' });
+    res.status(500).json({ error: error.message || 'Failed to create customer' });
   }
 });
 
@@ -5266,7 +5779,24 @@ app.put('/api/customer/profile', async (req, res) => {
 app.get('/api/customers/search/:query', auth, async (req, res) => {
   try {
     const { query } = req.params;
-    const customers = await Customer.search(query);
+    
+    // Get cafe_id from authenticated user (handles impersonation too)
+    let cafeId = null;
+    if (req.user) {
+      // Check if impersonating
+      if (req.impersonation && req.impersonation.isImpersonating) {
+        cafeId = req.impersonation.cafeId;
+      } else if (req.user.cafe_id) {
+        cafeId = req.user.cafe_id;
+      }
+    }
+    
+    // Super admin can optionally filter by cafe_id via query param
+    if (req.user && req.user.role === 'superadmin' && req.query.cafeId) {
+      cafeId = parseInt(req.query.cafeId, 10);
+    }
+    
+    const customers = await Customer.search(query, cafeId);
     res.json(customers);
   } catch (error) {
     console.error('Error searching customers:', error);
@@ -5283,20 +5813,38 @@ app.post('/api/customers', auth, async (req, res) => {
       return res.status(400).json({ error: 'Customer name is required' });
     }
 
+    // Get cafe_id from authenticated user (handles impersonation too)
+    let cafeId = null;
+    if (req.user) {
+      // Check if impersonating
+      if (req.impersonation && req.impersonation.isImpersonating) {
+        cafeId = req.impersonation.cafeId;
+      } else if (req.user.cafe_id) {
+        cafeId = req.user.cafe_id;
+      }
+    }
+    
+    if (!cafeId) {
+      return res.status(400).json({ 
+        error: 'Unable to determine cafe. Please ensure you are logged in and belong to a cafe.' 
+      });
+    }
+
     const customerData = {
       name: name.trim(),
       email: email ? email.trim() : null,
       phone: phone ? phone.trim() : null,
       address: address ? address.trim() : null,
       date_of_birth: date_of_birth || null,
-      notes: notes ? notes.trim() : null
+      notes: notes ? notes.trim() : null,
+      cafe_id: cafeId
     };
 
     const customer = await Customer.create(customerData);
     res.status(201).json(customer);
   } catch (error) {
     console.error('Error creating customer:', error);
-    res.status(500).json({ error: 'Failed to create customer' });
+    res.status(500).json({ error: error.message || 'Failed to create customer' });
   }
 });
 
@@ -5340,16 +5888,6 @@ app.get('/api/customers/:id/orders', auth, async (req, res) => {
   }
 });
 
-// Get customer statistics
-app.get('/api/customers/statistics', auth, async (req, res) => {
-  try {
-    const statistics = await Customer.getStatistics();
-    res.json(statistics);
-  } catch (error) {
-    console.error('Error fetching customer statistics:', error);
-    res.status(500).json({ error: 'Failed to fetch customer statistics' });
-  }
-});
 
 // Redeem loyalty points
 app.post('/api/customers/:id/redeem-points', auth, async (req, res) => {

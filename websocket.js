@@ -9,22 +9,34 @@ class WebSocketManager {
     this.clients = new Set();
     
     this.wss.on('connection', (ws, req) => {
+      console.log('[WebSocket] New client connected');
       this.clients.add(ws);
       
-      ws.on('close', () => {
+      ws.on('close', (code, reason) => {
+        console.log('[WebSocket] Client disconnected', { code, reason: reason?.toString() });
         this.clients.delete(ws);
       });
       
       ws.on('error', (error) => {
-        console.error('WebSocket error:', error);
+        console.error('[WebSocket] Connection error:', error.message);
         this.clients.delete(ws);
       });
       
       // Send initial connection confirmation
-      ws.send(JSON.stringify({
-        type: 'connected',
-        message: 'Connected to order updates'
-      }));
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'connected',
+            message: 'Connected to order updates'
+          }));
+        }
+      } catch (error) {
+        console.error('[WebSocket] Error sending initial message:', error);
+      }
+    });
+
+    this.wss.on('error', (error) => {
+      console.error('[WebSocket] Server error:', error);
     });
   }
   

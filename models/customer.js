@@ -1,9 +1,32 @@
 const { pool } = require('../config/database');
 
 class Customer {
-  // Get all customers
-  static async getAll() {
+  // Get all customers (optionally filtered by cafe_id)
+  static async getAll(cafeId = null) {
     try {
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'customers' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
+      // Build WHERE clause
+      let whereClause = '';
+      const params = [];
+      
+      if (hasCafeId && cafeId) {
+        whereClause = 'WHERE cafe_id = ?';
+        params.push(cafeId);
+      } else if (hasCafeId && !cafeId) {
+        // If cafe_id column exists but no cafeId provided, return empty array
+        return [];
+      }
+      
       const [rows] = await pool.execute(`
         SELECT 
           id, name, email, phone, address, date_of_birth,
@@ -11,14 +34,15 @@ class Customer {
           first_visit_date, last_visit_date, is_active, notes,
           created_at, updated_at
         FROM customers
+        ${whereClause}
         ORDER BY name ASC
-      `);
+      `, params);
 
       return rows.map(customer => ({
         ...customer,
-        loyalty_points: parseInt(customer.loyalty_points),
-        total_spent: parseFloat(customer.total_spent),
-        visit_count: parseInt(customer.visit_count)
+        loyalty_points: parseInt(customer.loyalty_points) || 0,
+        total_spent: parseFloat(customer.total_spent) || 0,
+        visit_count: parseInt(customer.visit_count) || 0
       }));
     } catch (error) {
       throw new Error(`Error fetching customers: ${error.message}`);
@@ -54,9 +78,33 @@ class Customer {
     }
   }
 
-  // Get customer by email or phone
-  static async findByEmailOrPhone(email, phone) {
+  // Get customer by email or phone (optionally filtered by cafe_id)
+  static async findByEmailOrPhone(email, phone, cafeId = null) {
     try {
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'customers' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
+      let whereClause = 'WHERE (email = ? OR phone = ?)';
+      const params = [email, phone];
+      
+      // If cafe_id column exists and cafeId is provided, scope to that cafe
+      if (hasCafeId && cafeId) {
+        whereClause += ' AND cafe_id = ?';
+        params.push(cafeId);
+      } else if (hasCafeId && !cafeId) {
+        // If cafe_id column exists but no cafeId provided, return null
+        // (prevents cross-cafe customer lookups)
+        return null;
+      }
+      
       const [rows] = await pool.execute(`
         SELECT 
           id, name, email, phone, address, date_of_birth,
@@ -64,8 +112,9 @@ class Customer {
           first_visit_date, last_visit_date, is_active, notes,
           created_at, updated_at
         FROM customers
-        WHERE email = ? OR phone = ?
-      `, [email, phone]);
+        ${whereClause}
+        LIMIT 1
+      `, params);
 
       if (rows.length === 0) {
         return null;
@@ -74,9 +123,9 @@ class Customer {
       const customer = rows[0];
       return {
         ...customer,
-        loyalty_points: parseInt(customer.loyalty_points),
-        total_spent: parseFloat(customer.total_spent),
-        visit_count: parseInt(customer.visit_count)
+        loyalty_points: parseInt(customer.loyalty_points) || 0,
+        total_spent: parseFloat(customer.total_spent) || 0,
+        visit_count: parseInt(customer.visit_count) || 0
       };
     } catch (error) {
       throw new Error(`Error finding customer: ${error.message}`);
@@ -86,14 +135,43 @@ class Customer {
   // Create new customer
   static async create(customerData) {
     try {
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'customers' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
       const {
-        name, email, phone, address, date_of_birth, notes
+        name, email, phone, address, date_of_birth, notes, cafe_id
       } = customerData;
 
-      const [result] = await pool.execute(`
-        INSERT INTO customers (name, email, phone, address, date_of_birth, notes)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `, [name, email, phone, address, date_of_birth, notes]);
+      let query, params;
+      
+      if (hasCafeId) {
+        // If cafe_id column exists, include it in the insert
+        if (!cafe_id) {
+          throw new Error('cafe_id is required when creating a customer');
+        }
+        query = `
+          INSERT INTO customers (name, email, phone, address, date_of_birth, notes, cafe_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `;
+        params = [name, email, phone, address, date_of_birth, notes, cafe_id];
+      } else {
+        // Legacy: no cafe_id column
+        query = `
+          INSERT INTO customers (name, email, phone, address, date_of_birth, notes)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `;
+        params = [name, email, phone, address, date_of_birth, notes];
+      }
+
+      const [result] = await pool.execute(query, params);
 
       return await this.getById(result.insertId);
     } catch (error) {
@@ -207,10 +285,32 @@ class Customer {
     }
   }
 
-  // Search customers
-  static async search(query) {
+  // Search customers by name, email, or phone (optionally filtered by cafe_id)
+  static async search(query, cafeId = null) {
     try {
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'customers' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
       const searchQuery = `%${query}%`;
+      let whereClause = 'WHERE (name LIKE ? OR email LIKE ? OR phone LIKE ?)';
+      const params = [searchQuery, searchQuery, searchQuery];
+      
+      if (hasCafeId && cafeId) {
+        whereClause += ' AND cafe_id = ?';
+        params.push(cafeId);
+      } else if (hasCafeId && !cafeId) {
+        // If cafe_id column exists but no cafeId provided, return empty array
+        return [];
+      }
+      
       const [rows] = await pool.execute(`
         SELECT 
           id, name, email, phone, address, date_of_birth,
@@ -218,15 +318,15 @@ class Customer {
           first_visit_date, last_visit_date, is_active, notes,
           created_at, updated_at
         FROM customers
-        WHERE name LIKE ? OR email LIKE ? OR phone LIKE ?
+        ${whereClause}
         ORDER BY name ASC
-      `, [searchQuery, searchQuery, searchQuery]);
+      `, params);
 
       return rows.map(customer => ({
         ...customer,
-        loyalty_points: parseInt(customer.loyalty_points),
-        total_spent: parseFloat(customer.total_spent),
-        visit_count: parseInt(customer.visit_count)
+        loyalty_points: parseInt(customer.loyalty_points) || 0,
+        total_spent: parseFloat(customer.total_spent) || 0,
+        visit_count: parseInt(customer.visit_count) || 0
       }));
     } catch (error) {
       throw new Error(`Error searching customers: ${error.message}`);
@@ -234,19 +334,86 @@ class Customer {
   }
 
   // Get customer statistics
-  static async getStatistics() {
+  static async getStatistics(cafeId = null) {
     try {
-      const [totalCustomers] = await pool.execute('SELECT COUNT(*) as count FROM customers');
-      const [activeCustomers] = await pool.execute("SELECT COUNT(*) as count FROM customers WHERE is_active = TRUE");
-      const [totalLoyaltyPoints] = await pool.execute('SELECT SUM(loyalty_points) as total FROM customers');
-      const [totalSpent] = await pool.execute('SELECT SUM(total_spent) as total FROM customers');
-      const [avgSpent] = await pool.execute('SELECT AVG(total_spent) as average FROM customers');
-      const [topCustomers] = await pool.execute(`
-        SELECT name, total_spent, loyalty_points, visit_count
-        FROM customers
-        ORDER BY total_spent DESC
-        LIMIT 5
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'customers' 
+        AND COLUMN_NAME = 'cafe_id'
       `);
+      
+      const hasCafeId = columns.length > 0;
+      
+      // Build WHERE clause
+      let whereClause = '';
+      const params = [];
+      
+      if (hasCafeId && cafeId) {
+        whereClause = 'WHERE cafe_id = ?';
+        params.push(cafeId);
+      } else if (hasCafeId && !cafeId) {
+        // If cafe_id column exists but no cafeId provided, return empty stats
+        return {
+          totalCustomers: 0,
+          activeCustomers: 0,
+          totalLoyaltyPoints: 0,
+          totalSpent: 0,
+          averageSpent: 0,
+          topCustomers: []
+        };
+      }
+      
+      const [totalCustomers] = await pool.execute(
+        `SELECT COUNT(*) as count FROM customers ${whereClause}`,
+        params
+      );
+      
+      const activeWhereClause = hasCafeId && cafeId 
+        ? 'WHERE cafe_id = ? AND is_active = TRUE'
+        : hasCafeId && !cafeId
+        ? 'WHERE 1=0' // Return 0 if cafe_id required but not provided
+        : 'WHERE is_active = TRUE';
+      
+      const [activeCustomers] = await pool.execute(
+        `SELECT COUNT(*) as count FROM customers ${activeWhereClause}`,
+        params
+      );
+      
+      const [totalLoyaltyPoints] = await pool.execute(
+        `SELECT SUM(loyalty_points) as total FROM customers ${whereClause}`,
+        params
+      );
+      
+      const [totalSpent] = await pool.execute(
+        `SELECT SUM(total_spent) as total FROM customers ${whereClause}`,
+        params
+      );
+      
+      const [avgSpent] = await pool.execute(
+        `SELECT AVG(total_spent) as average FROM customers ${whereClause}`,
+        params
+      );
+      
+      const topCustomersQuery = hasCafeId && cafeId
+        ? `SELECT name, total_spent, loyalty_points, visit_count
+           FROM customers
+           WHERE cafe_id = ?
+           ORDER BY total_spent DESC
+           LIMIT 5`
+        : hasCafeId && !cafeId
+        ? `SELECT name, total_spent, loyalty_points, visit_count
+           FROM customers
+           WHERE 1=0
+           LIMIT 5`
+        : `SELECT name, total_spent, loyalty_points, visit_count
+           FROM customers
+           ORDER BY total_spent DESC
+           LIMIT 5`;
+      
+      const [topCustomers] = await pool.execute(topCustomersQuery, params);
 
       return {
         totalCustomers: totalCustomers[0].count,
