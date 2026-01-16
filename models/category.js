@@ -1,15 +1,37 @@
 const { pool } = require('../config/database');
 
 class Category {
-  // Get all categories
-  static async getAll() {
+  // Get all categories (optionally filtered by cafe_id)
+  static async getAll(cafeId = null) {
     try {
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'categories' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
+      let whereClause = 'WHERE is_active = TRUE';
+      const params = [];
+      
+      if (hasCafeId && cafeId) {
+        whereClause += ' AND cafe_id = ?';
+        params.push(cafeId);
+      } else if (hasCafeId && !cafeId) {
+        // If cafe_id column exists but no cafeId provided, return empty array
+        return [];
+      }
+      
       const [rows] = await pool.execute(`
         SELECT id, name, description, sort_order, is_active, created_at, updated_at
         FROM categories 
-        WHERE is_active = TRUE
+        ${whereClause}
         ORDER BY sort_order, name
-      `);
+      `, params);
       
       return rows.map(row => ({
         ...row,
@@ -44,12 +66,34 @@ class Category {
   // Create new category
   static async create(categoryData) {
     try {
-      const { name, description, sort_order } = categoryData;
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'categories' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
       
-      const [result] = await pool.execute(
-        'INSERT INTO categories (name, description, sort_order) VALUES (?, ?, ?)',
-        [name.trim(), description ? description.trim() : '', sort_order || 0]
-      );
+      const hasCafeId = columns.length > 0;
+      
+      const { name, description, sort_order, cafe_id } = categoryData;
+      
+      if (hasCafeId && !cafe_id) {
+        throw new Error('cafe_id is required when creating a category');
+      }
+      
+      let query, params;
+      
+      if (hasCafeId) {
+        query = 'INSERT INTO categories (name, description, sort_order, cafe_id) VALUES (?, ?, ?, ?)';
+        params = [name.trim(), description ? description.trim() : '', sort_order || 0, cafe_id];
+      } else {
+        query = 'INSERT INTO categories (name, description, sort_order) VALUES (?, ?, ?)';
+        params = [name.trim(), description ? description.trim() : '', sort_order || 0];
+      }
+      
+      const [result] = await pool.execute(query, params);
       
       return {
         id: result.insertId,
@@ -63,9 +107,36 @@ class Category {
     }
   }
 
-  // Update category
-  static async update(id, categoryData) {
+  // Update category (optionally verify cafe_id)
+  static async update(id, categoryData, cafeId = null) {
     try {
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'categories' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
+      // If cafe_id exists and cafeId is provided, verify the category belongs to this cafe
+      if (hasCafeId && cafeId) {
+        const [existing] = await pool.execute(
+          'SELECT cafe_id FROM categories WHERE id = ?',
+          [id]
+        );
+        
+        if (existing.length === 0) {
+          throw new Error('Category not found');
+        }
+        
+        if (existing[0].cafe_id !== cafeId) {
+          throw new Error('Category does not belong to this cafe');
+        }
+      }
+      
       const { name, description, sort_order, is_active } = categoryData;
       
       const [result] = await pool.execute(
@@ -83,9 +154,36 @@ class Category {
     }
   }
 
-  // Delete category (soft delete)
-  static async delete(id) {
+  // Delete category (soft delete, optionally verify cafe_id)
+  static async delete(id, cafeId = null) {
     try {
+      // Check if cafe_id column exists
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'categories' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = columns.length > 0;
+      
+      // If cafe_id exists and cafeId is provided, verify the category belongs to this cafe
+      if (hasCafeId && cafeId) {
+        const [existing] = await pool.execute(
+          'SELECT cafe_id FROM categories WHERE id = ?',
+          [id]
+        );
+        
+        if (existing.length === 0) {
+          throw new Error('Category not found');
+        }
+        
+        if (existing[0].cafe_id !== cafeId) {
+          throw new Error('Category does not belong to this cafe');
+        }
+      }
+      
       const [result] = await pool.execute(
         'UPDATE categories SET is_active = FALSE WHERE id = ?',
         [id]
@@ -101,9 +199,41 @@ class Category {
     }
   }
 
-  // Get categories with menu item counts
-  static async getWithItemCounts() {
+  // Get categories with menu item counts (optionally filtered by cafe_id)
+  static async getWithItemCounts(cafeId = null) {
     try {
+      // Check if cafe_id column exists
+      const [categoryColumns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'categories' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const [menuColumns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'menu_items' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = categoryColumns.length > 0 && menuColumns.length > 0;
+      
+      let whereClause = 'WHERE c.is_active = TRUE';
+      const params = [];
+      
+      let joinClause = 'LEFT JOIN menu_items m ON c.id = m.category_id AND m.is_available = TRUE';
+      
+      if (hasCafeId && cafeId) {
+        whereClause += ' AND c.cafe_id = ?';
+        joinClause += ' AND m.cafe_id = ?';
+        params.push(cafeId, cafeId);
+      } else if (hasCafeId && !cafeId) {
+        return [];
+      }
+      
       const [rows] = await pool.execute(`
         SELECT 
           c.id, 
@@ -113,11 +243,11 @@ class Category {
           c.is_active,
           COUNT(m.id) as item_count
         FROM categories c
-        LEFT JOIN menu_items m ON c.id = m.category_id AND m.is_available = TRUE
-        WHERE c.is_active = TRUE
+        ${joinClause}
+        ${whereClause}
         GROUP BY c.id, c.name, c.description, c.sort_order, c.is_active
         ORDER BY c.sort_order, c.name
-      `);
+      `, params);
       
       return rows.map(row => ({
         ...row,
@@ -129,11 +259,40 @@ class Category {
     }
   }
 
-  // Auto-generate categories from menu items
-  static async generateFromMenuItems() {
+  // Auto-generate categories from menu items (optionally filtered by cafe_id)
+  static async generateFromMenuItems(cafeId = null) {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
+
+      // Check if cafe_id columns exist
+      const [menuColumns] = await connection.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'menu_items' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const [categoryColumns] = await connection.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'categories' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = menuColumns.length > 0 && categoryColumns.length > 0;
+      
+      let whereClause = 'WHERE m.is_available = TRUE';
+      const params = [];
+      
+      if (hasCafeId && cafeId) {
+        whereClause += ' AND m.cafe_id = ?';
+        params.push(cafeId);
+      } else if (hasCafeId && !cafeId) {
+        throw new Error('cafeId is required when cafe_id column exists');
+      }
 
       // Get all unique category names from menu items
       const [menuCategories] = await connection.execute(`
@@ -144,15 +303,21 @@ class Category {
           COUNT(m.id) as item_count
         FROM menu_items m
         LEFT JOIN categories c ON m.category_id = c.id
-        WHERE m.is_available = TRUE
+        ${whereClause}
         GROUP BY c.name, c.description, c.sort_order
         ORDER BY c.sort_order, c.name
-      `);
+      `, params);
 
-      // Get existing categories
-      const [existingCategories] = await connection.execute(`
-        SELECT id, name, is_active FROM categories
-      `);
+      // Get existing categories (scoped to cafe if applicable)
+      let existingCategoriesQuery = 'SELECT id, name, is_active FROM categories';
+      const existingParams = [];
+      
+      if (hasCafeId && cafeId) {
+        existingCategoriesQuery += ' WHERE cafe_id = ?';
+        existingParams.push(cafeId);
+      }
+      
+      const [existingCategories] = await connection.execute(existingCategoriesQuery, existingParams);
       const existingCategoryMap = {};
       existingCategories.forEach(cat => {
         existingCategoryMap[cat.name] = cat;
@@ -177,15 +342,23 @@ class Category {
               item_count: menuCategory.item_count
             });
           } else {
-            // Create new category
-            const [result] = await connection.execute(`
-              INSERT INTO categories (name, description, sort_order, is_active) 
-              VALUES (?, ?, ?, TRUE)
-            `, [
+            // Create new category (scoped to cafe if applicable)
+            let insertQuery = 'INSERT INTO categories (name, description, sort_order, is_active';
+            let insertValues = '(?, ?, ?, TRUE';
+            const insertParams = [
               categoryName,
               menuCategory.category_description || '',
               menuCategory.sort_order || 0
-            ]);
+            ];
+            
+            if (hasCafeId && cafeId) {
+              insertQuery += ', cafe_id) VALUES (?, ?, ?, TRUE, ?)';
+              insertParams.push(cafeId);
+            } else {
+              insertQuery += ') VALUES (?, ?, ?, TRUE)';
+            }
+            
+            const [result] = await connection.execute(insertQuery, insertParams);
             
             generatedCategories.push({
               id: result.insertId,
@@ -199,17 +372,25 @@ class Category {
         }
       }
 
-      // Deactivate categories that no longer have menu items
+      // Deactivate categories that no longer have menu items (scoped to cafe if applicable)
       const activeCategoryNames = menuCategories
         .filter(cat => cat.category_name)
         .map(cat => cat.category_name.trim());
       
       if (activeCategoryNames.length > 0) {
-        await connection.execute(`
+        let deactivateQuery = `
           UPDATE categories 
           SET is_active = FALSE 
           WHERE name NOT IN (${activeCategoryNames.map(() => '?').join(',')})
-        `, activeCategoryNames);
+        `;
+        const deactivateParams = [...activeCategoryNames];
+        
+        if (hasCafeId && cafeId) {
+          deactivateQuery += ' AND cafe_id = ?';
+          deactivateParams.push(cafeId);
+        }
+        
+        await connection.execute(deactivateQuery, deactivateParams);
       }
 
       await connection.commit();
@@ -222,9 +403,40 @@ class Category {
     }
   }
 
-  // Get auto-generated categories (categories that exist in menu items)
-  static async getAutoGenerated() {
+  // Get auto-generated categories (categories that exist in menu items, optionally filtered by cafe_id)
+  static async getAutoGenerated(cafeId = null) {
     try {
+      // Check if cafe_id columns exist
+      const [categoryColumns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'categories' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const [menuColumns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'menu_items' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      
+      const hasCafeId = categoryColumns.length > 0 && menuColumns.length > 0;
+      
+      let whereClause = 'WHERE c.is_active = TRUE';
+      let joinClause = 'INNER JOIN menu_items m ON c.id = m.category_id AND m.is_available = TRUE';
+      const params = [];
+      
+      if (hasCafeId && cafeId) {
+        whereClause += ' AND c.cafe_id = ?';
+        joinClause += ' AND m.cafe_id = ?';
+        params.push(cafeId, cafeId);
+      } else if (hasCafeId && !cafeId) {
+        return [];
+      }
+      
       const [rows] = await pool.execute(`
         SELECT 
           c.id, 
@@ -234,11 +446,11 @@ class Category {
           c.is_active,
           COUNT(m.id) as item_count
         FROM categories c
-        INNER JOIN menu_items m ON c.id = m.category_id AND m.is_available = TRUE
-        WHERE c.is_active = TRUE
+        ${joinClause}
+        ${whereClause}
         GROUP BY c.id, c.name, c.description, c.sort_order, c.is_active
         ORDER BY c.sort_order, c.name
-      `);
+      `, params);
       
       return rows.map(row => ({
         ...row,
