@@ -68,7 +68,7 @@ class CafeSettings {
   // Get default cafe settings
   static getDefaultSettings() {
     return {
-      cafe_name: 'Palm Cafe',
+      cafe_name: null,
       logo_url: null,
       hero_image_url: null,
       promo_banner_image_url: null,
