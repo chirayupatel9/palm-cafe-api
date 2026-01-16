@@ -2,7 +2,7 @@ const { pool } = require('../config/database');
 
 class CafeSettings {
   // Get current cafe settings
-  static async getCurrent() {
+  static async getCurrent(cafeId = null) {
     try {
       // First, check which columns exist in the cafe_settings table
       const [columns] = await pool.execute(`
@@ -13,6 +13,7 @@ class CafeSettings {
       `);
       
       const existingColumns = columns.map(col => col.COLUMN_NAME);
+      const hasCafeIdColumn = existingColumns.includes('cafe_id');
       
       // Build dynamic SELECT query based on existing columns
       const selectColumns = existingColumns.filter(col => 
@@ -24,13 +25,32 @@ class CafeSettings {
         return this.getDefaultSettings();
       }
       
+      // Build WHERE clause
+      let whereClause = 'WHERE is_active = TRUE';
+      const queryParams = [];
+      
+      // If cafe_id column exists and cafeId is provided, filter by cafe_id
+      if (hasCafeIdColumn && cafeId) {
+        whereClause += ' AND cafe_id = ?';
+        queryParams.push(cafeId);
+      } else if (hasCafeIdColumn && !cafeId) {
+        // If cafe_id column exists but no cafeId provided, this is expected for:
+        // - Legacy code paths
+        // - Startup/initialization
+        // - Default settings retrieval
+        // Only warn in development to reduce noise
+        if (process.env.NODE_ENV !== 'production') {
+          console.debug('cafe_id column exists but no cafeId provided to getCurrent() - using first active settings');
+        }
+      }
+      
       const [rows] = await pool.execute(`
         SELECT ${selectColumns.join(', ')}
         FROM cafe_settings 
-        WHERE is_active = TRUE 
+        ${whereClause}
         ORDER BY created_at DESC 
         LIMIT 1
-      `);
+      `, queryParams);
 
       if (rows.length === 0) {
         // Return default settings if no settings exist
@@ -225,8 +245,25 @@ class CafeSettings {
         }
       });
 
-      // Deactivate current settings
-      await connection.execute('UPDATE cafe_settings SET is_active = FALSE');
+      // Add cafe_id if column exists and value is provided
+      if (existingColumns.includes('cafe_id') && settingsData.cafe_id) {
+        insertColumns.push('cafe_id');
+        insertPlaceholders.push('?');
+        insertValues.push(settingsData.cafe_id);
+        console.log('[CafeSettings.update] Including cafe_id in insert:', settingsData.cafe_id);
+      }
+
+      // Deactivate current settings - filter by cafe_id if provided
+      const hasCafeIdColumn = existingColumns.includes('cafe_id');
+      if (hasCafeIdColumn && settingsData.cafe_id) {
+        await connection.execute(
+          'UPDATE cafe_settings SET is_active = FALSE WHERE cafe_id = ?',
+          [settingsData.cafe_id]
+        );
+      } else {
+        // Legacy: no cafe_id column, deactivate all
+        await connection.execute('UPDATE cafe_settings SET is_active = FALSE');
+      }
 
       // Insert new settings with dynamic columns
       const insertQuery = `
@@ -288,8 +325,9 @@ class CafeSettings {
 
       await connection.commit();
 
-      // Return the updated settings
-      return await this.getCurrent();
+      // Return the updated settings - use cafe_id if provided
+      const cafeId = settingsData.cafe_id || null;
+      return await this.getCurrent(cafeId);
     } catch (error) {
       await connection.rollback();
       console.error('Error in cafe settings update:', error);
@@ -326,49 +364,76 @@ class CafeSettings {
   }
 
   // Upload logo
-  static async updateLogo(logoUrl) {
+  static async updateLogo(logoUrl, cafeId = null) {
     try {
-      const currentSettings = await this.getCurrent();
+      console.log('[CafeSettings.updateLogo] Starting update', { logoUrl, cafeId });
+      const currentSettings = await this.getCurrent(cafeId);
       const updatedSettings = {
         ...currentSettings,
         logo_url: logoUrl,
         changed_by: 'admin'
       };
       
-      return await this.update(updatedSettings);
+      // Include cafe_id if provided
+      if (cafeId) {
+        updatedSettings.cafe_id = cafeId;
+      }
+      
+      const result = await this.update(updatedSettings);
+      console.log('[CafeSettings.updateLogo] Update successful', { cafeId, logoUrl });
+      return result;
     } catch (error) {
+      console.error('[CafeSettings.updateLogo] Error:', error);
       throw new Error(`Error updating logo: ${error.message}`);
     }
   }
 
   // Update hero image
-  static async updateHeroImage(heroImageUrl) {
+  static async updateHeroImage(heroImageUrl, cafeId = null) {
     try {
-      const currentSettings = await this.getCurrent();
+      console.log('[CafeSettings.updateHeroImage] Starting update', { heroImageUrl, cafeId });
+      const currentSettings = await this.getCurrent(cafeId);
       const updatedSettings = {
         ...currentSettings,
         hero_image_url: heroImageUrl,
         changed_by: 'admin'
       };
       
-      return await this.update(updatedSettings);
+      // Include cafe_id if provided
+      if (cafeId) {
+        updatedSettings.cafe_id = cafeId;
+      }
+      
+      const result = await this.update(updatedSettings);
+      console.log('[CafeSettings.updateHeroImage] Update successful', { cafeId, heroImageUrl });
+      return result;
     } catch (error) {
+      console.error('[CafeSettings.updateHeroImage] Error:', error);
       throw new Error(`Error updating hero image: ${error.message}`);
     }
   }
 
   // Update promo banner image
-  static async updatePromoBannerImage(promoBannerImageUrl) {
+  static async updatePromoBannerImage(promoBannerImageUrl, cafeId = null) {
     try {
-      const currentSettings = await this.getCurrent();
+      console.log('[CafeSettings.updatePromoBannerImage] Starting update', { promoBannerImageUrl, cafeId });
+      const currentSettings = await this.getCurrent(cafeId);
       const updatedSettings = {
         ...currentSettings,
         promo_banner_image_url: promoBannerImageUrl,
         changed_by: 'admin'
       };
       
-      return await this.update(updatedSettings);
+      // Include cafe_id if provided
+      if (cafeId) {
+        updatedSettings.cafe_id = cafeId;
+      }
+      
+      const result = await this.update(updatedSettings);
+      console.log('[CafeSettings.updatePromoBannerImage] Update successful', { cafeId, promoBannerImageUrl });
+      return result;
     } catch (error) {
+      console.error('[CafeSettings.updatePromoBannerImage] Error:', error);
       throw new Error(`Error updating promo banner image: ${error.message}`);
     }
   }

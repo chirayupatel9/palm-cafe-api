@@ -3137,6 +3137,8 @@ app.get('/api/menu/branding', async (req, res) => {
         `);
 
         const existingBrandingColumns = brandingColumns.map(col => col.COLUMN_NAME);
+        console.log('[BRANDING] Branding columns found:', existingBrandingColumns);
+        console.log('[BRANDING] Querying for cafe_id:', cafe.id);
 
         if (existingBrandingColumns.length > 0) {
           const selectColumns = existingBrandingColumns.join(', ');
@@ -3145,16 +3147,34 @@ app.get('/api/menu/branding', async (req, res) => {
             [cafe.id]
           );
 
+          console.log('[BRANDING] Settings found:', settings.length, 'rows');
           if (settings.length > 0) {
+            console.log('[BRANDING] Settings data:', JSON.stringify(settings[0], null, 2));
             if (existingBrandingColumns.includes('hero_image_url')) {
               heroImageUrl = settings[0].hero_image_url || null;
+              console.log('[BRANDING] hero_image_url:', heroImageUrl);
             }
             if (existingBrandingColumns.includes('promo_banner_image_url')) {
               promoBannerImageUrl = settings[0].promo_banner_image_url || null;
+              console.log('[BRANDING] promo_banner_image_url:', promoBannerImageUrl);
             }
             if (existingBrandingColumns.includes('logo_url')) {
               logoUrl = settings[0].logo_url || null;
+              console.log('[BRANDING] logo_url:', logoUrl);
             }
+          } else {
+            // Debug: Check if any settings exist for this cafe (active or inactive)
+            const [allSettings] = await pool.execute(
+              `SELECT cafe_id, is_active, hero_image_url, promo_banner_image_url, logo_url, created_at FROM cafe_settings WHERE cafe_id = ? ORDER BY created_at DESC LIMIT 5`,
+              [cafe.id]
+            );
+            console.log('[BRANDING] All settings for cafe_id', cafe.id, ':', JSON.stringify(allSettings, null, 2));
+            
+            // Also check if there are any settings without cafe_id filter
+            const [anySettings] = await pool.execute(
+              `SELECT cafe_id, is_active, hero_image_url, promo_banner_image_url, logo_url FROM cafe_settings ORDER BY created_at DESC LIMIT 5`
+            );
+            console.log('[BRANDING] Recent settings (any cafe):', JSON.stringify(anySettings, null, 2));
           }
         }
       } else {
@@ -3311,10 +3331,51 @@ app.get('/api/currency-settings/available', async (req, res) => {
   }
 });
 
-// Get current cafe settings
+// Get current cafe settings (public endpoint - works with or without auth)
 app.get('/api/cafe-settings', async (req, res) => {
   try {
-    const cafeSettings = await CafeSettings.getCurrent();
+    let cafeId = null;
+    
+    // Try to get cafeId from authenticated user first (if token provided)
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    if (token) {
+      try {
+        const jwt = require('jsonwebtoken');
+        const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+        const decoded = jwt.verify(token, JWT_SECRET, { clockTolerance: 600 });
+        const user = await User.findById(decoded.userId);
+        if (user) {
+          const userWithCafe = await User.findByIdWithCafe(user.id);
+          if (userWithCafe && userWithCafe.cafe_id) {
+            cafeId = userWithCafe.cafe_id;
+          }
+        }
+      } catch (error) {
+        // Token invalid or expired, continue as unauthenticated user
+      }
+    }
+    
+    // If no cafeId from user, get cafe slug from query param or use default
+    if (!cafeId) {
+      const cafeSlug = req.query.cafeSlug || 'default';
+      try {
+        const cafe = await Cafe.getBySlug(cafeSlug);
+        if (cafe) {
+          cafeId = cafe.id;
+        }
+      } catch (error) {
+        // Cafe might not exist, use null (will get default settings)
+      }
+    }
+    
+    console.log('[CAFE-SETTINGS] Fetching settings', { cafeId, hasToken: !!token, cafeSlug: req.query.cafeSlug });
+    const cafeSettings = await CafeSettings.getCurrent(cafeId);
+    console.log('[CAFE-SETTINGS] Settings retrieved', { 
+      cafeId, 
+      hasHero: !!cafeSettings.hero_image_url,
+      hasPromo: !!cafeSettings.promo_banner_image_url,
+      hasLogo: !!cafeSettings.logo_url
+    });
     res.json(cafeSettings);
   } catch (error) {
     console.error('Error fetching cafe settings:', error);
@@ -3454,9 +3515,26 @@ app.get('/api/cafe-settings/history', auth, async (req, res) => {
 // Upload cafe logo
 app.post('/api/cafe-settings/logo', auth, imageUpload.single('logo'), async (req, res) => {
   try {
+    console.log('[UPLOAD LOGO] Request received', { 
+      hasFile: !!req.file, 
+      userId: req.user?.id, 
+      cafeId: req.user?.cafe_id,
+      impersonating: req.impersonation?.isImpersonating 
+    });
+
     if (!req.file) {
+      console.error('[UPLOAD LOGO] No file in request');
       return res.status(400).json({ error: 'No logo file uploaded' });
     }
+
+    // Extract cafe_id from user context
+    const cafeId = req.user?.cafe_id;
+    if (!cafeId) {
+      console.error('[UPLOAD LOGO] No cafe_id in user context', { user: req.user });
+      return res.status(400).json({ error: 'User must be associated with a cafe' });
+    }
+
+    console.log('[UPLOAD LOGO] Cafe ID:', cafeId);
 
     // Validate file type
     if (!req.file.mimetype.startsWith('image/')) {
@@ -3468,18 +3546,36 @@ app.post('/api/cafe-settings/logo', auth, imageUpload.single('logo'), async (req
     const fileName = `cafe-logo-${Date.now()}${fileExtension}`;
     const filePath = path.join(__dirname, 'public', 'images', fileName);
 
+    console.log('[UPLOAD LOGO] File path:', filePath);
+
     // Ensure directory exists
     const uploadDir = path.dirname(filePath);
     if (!fs.existsSync(uploadDir)) {
+      console.log('[UPLOAD LOGO] Creating directory:', uploadDir);
       fs.mkdirSync(uploadDir, { recursive: true });
     }
 
     // Save file
     fs.writeFileSync(filePath, req.file.buffer);
+    
+    // Verify file was written
+    if (!fs.existsSync(filePath)) {
+      console.error('[UPLOAD LOGO] File write failed - file does not exist');
+      return res.status(500).json({ error: 'Failed to save file to disk' });
+    }
+    
+    const fileStats = fs.statSync(filePath);
+    console.log('[UPLOAD LOGO] File written successfully', { 
+      size: fileStats.size, 
+      path: filePath 
+    });
 
     // Update cafe settings with new logo URL
     const logoUrl = `/images/${fileName}`;
-    const updatedSettings = await CafeSettings.updateLogo(logoUrl);
+    console.log('[UPLOAD LOGO] Updating database', { logoUrl, cafeId });
+    const updatedSettings = await CafeSettings.updateLogo(logoUrl, cafeId);
+
+    console.log('[UPLOAD LOGO] Success', { logoUrl, cafeId });
 
     res.json({ 
       success: true, 
@@ -3487,17 +3583,33 @@ app.post('/api/cafe-settings/logo', auth, imageUpload.single('logo'), async (req
       message: 'Logo uploaded successfully' 
     });
   } catch (error) {
-    console.error('Error uploading logo:', error);
-    res.status(500).json({ error: 'Failed to upload logo' });
+    console.error('[UPLOAD LOGO] Error:', error);
+    res.status(500).json({ error: 'Failed to upload logo', details: error.message });
   }
 });
 
 // Upload cafe hero image
 app.post('/api/cafe-settings/hero-image', auth, imageUpload.single('hero_image'), async (req, res) => {
   try {
+    console.log('[UPLOAD HERO] Request received', { 
+      hasFile: !!req.file, 
+      userId: req.user?.id, 
+      cafeId: req.user?.cafe_id 
+    });
+
     if (!req.file) {
+      console.error('[UPLOAD HERO] No file in request');
       return res.status(400).json({ error: 'No hero image file uploaded' });
     }
+
+    // Extract cafe_id from user context
+    const cafeId = req.user?.cafe_id;
+    if (!cafeId) {
+      console.error('[UPLOAD HERO] No cafe_id in user context');
+      return res.status(400).json({ error: 'User must be associated with a cafe' });
+    }
+
+    console.log('[UPLOAD HERO] Cafe ID:', cafeId);
 
     // Validate file type
     if (!req.file.mimetype.startsWith('image/')) {
@@ -3515,18 +3627,36 @@ app.post('/api/cafe-settings/hero-image', auth, imageUpload.single('hero_image')
     const fileName = `cafe-hero-${Date.now()}${fileExtension}`;
     const filePath = path.join(__dirname, 'public', 'images', fileName);
 
+    console.log('[UPLOAD HERO] File path:', filePath);
+
     // Ensure directory exists
     const uploadDir = path.dirname(filePath);
     if (!fs.existsSync(uploadDir)) {
+      console.log('[UPLOAD HERO] Creating directory:', uploadDir);
       fs.mkdirSync(uploadDir, { recursive: true });
     }
 
     // Save file
     fs.writeFileSync(filePath, req.file.buffer);
+    
+    // Verify file was written
+    if (!fs.existsSync(filePath)) {
+      console.error('[UPLOAD HERO] File write failed - file does not exist');
+      return res.status(500).json({ error: 'Failed to save file to disk' });
+    }
+    
+    const fileStats = fs.statSync(filePath);
+    console.log('[UPLOAD HERO] File written successfully', { 
+      size: fileStats.size, 
+      path: filePath 
+    });
 
     // Update cafe settings with new hero image URL
     const heroImageUrl = `/images/${fileName}`;
-    const updatedSettings = await CafeSettings.updateHeroImage(heroImageUrl);
+    console.log('[UPLOAD HERO] Updating database', { heroImageUrl, cafeId });
+    const updatedSettings = await CafeSettings.updateHeroImage(heroImageUrl, cafeId);
+
+    console.log('[UPLOAD HERO] Success', { heroImageUrl, cafeId });
 
     res.json({ 
       success: true, 
@@ -3534,17 +3664,33 @@ app.post('/api/cafe-settings/hero-image', auth, imageUpload.single('hero_image')
       message: 'Hero image uploaded successfully' 
     });
   } catch (error) {
-    console.error('Error uploading hero image:', error);
-    res.status(500).json({ error: 'Failed to upload hero image' });
+    console.error('[UPLOAD HERO] Error:', error);
+    res.status(500).json({ error: 'Failed to upload hero image', details: error.message });
   }
 });
 
 // Upload cafe promo banner image
 app.post('/api/cafe-settings/promo-banner-image', auth, imageUpload.single('promo_banner_image'), async (req, res) => {
   try {
+    console.log('[UPLOAD PROMO] Request received', { 
+      hasFile: !!req.file, 
+      userId: req.user?.id, 
+      cafeId: req.user?.cafe_id 
+    });
+
     if (!req.file) {
+      console.error('[UPLOAD PROMO] No file in request');
       return res.status(400).json({ error: 'No promo banner image file uploaded' });
     }
+
+    // Extract cafe_id from user context
+    const cafeId = req.user?.cafe_id;
+    if (!cafeId) {
+      console.error('[UPLOAD PROMO] No cafe_id in user context');
+      return res.status(400).json({ error: 'User must be associated with a cafe' });
+    }
+
+    console.log('[UPLOAD PROMO] Cafe ID:', cafeId);
 
     // Validate file type
     if (!req.file.mimetype.startsWith('image/')) {
@@ -3562,18 +3708,36 @@ app.post('/api/cafe-settings/promo-banner-image', auth, imageUpload.single('prom
     const fileName = `cafe-promo-banner-${Date.now()}${fileExtension}`;
     const filePath = path.join(__dirname, 'public', 'images', fileName);
 
+    console.log('[UPLOAD PROMO] File path:', filePath);
+
     // Ensure directory exists
     const uploadDir = path.dirname(filePath);
     if (!fs.existsSync(uploadDir)) {
+      console.log('[UPLOAD PROMO] Creating directory:', uploadDir);
       fs.mkdirSync(uploadDir, { recursive: true });
     }
 
     // Save file
     fs.writeFileSync(filePath, req.file.buffer);
+    
+    // Verify file was written
+    if (!fs.existsSync(filePath)) {
+      console.error('[UPLOAD PROMO] File write failed - file does not exist');
+      return res.status(500).json({ error: 'Failed to save file to disk' });
+    }
+    
+    const fileStats = fs.statSync(filePath);
+    console.log('[UPLOAD PROMO] File written successfully', { 
+      size: fileStats.size, 
+      path: filePath 
+    });
 
     // Update cafe settings with new promo banner image URL
     const promoBannerImageUrl = `/images/${fileName}`;
-    const updatedSettings = await CafeSettings.updatePromoBannerImage(promoBannerImageUrl);
+    console.log('[UPLOAD PROMO] Updating database', { promoBannerImageUrl, cafeId });
+    const updatedSettings = await CafeSettings.updatePromoBannerImage(promoBannerImageUrl, cafeId);
+
+    console.log('[UPLOAD PROMO] Success', { promoBannerImageUrl, cafeId });
 
     res.json({ 
       success: true, 
@@ -3581,15 +3745,19 @@ app.post('/api/cafe-settings/promo-banner-image', auth, imageUpload.single('prom
       message: 'Promo banner image uploaded successfully' 
     });
   } catch (error) {
-    console.error('Error uploading promo banner image:', error);
-    res.status(500).json({ error: 'Failed to upload promo banner image' });
+    console.error('[UPLOAD PROMO] Error:', error);
+    res.status(500).json({ error: 'Failed to upload promo banner image', details: error.message });
   }
 });
 
 // Remove cafe hero image
 app.delete('/api/cafe-settings/hero-image', auth, async (req, res) => {
   try {
-    const updatedSettings = await CafeSettings.updateHeroImage(null);
+    const cafeId = req.user?.cafe_id;
+    if (!cafeId) {
+      return res.status(400).json({ error: 'User must be associated with a cafe' });
+    }
+    const updatedSettings = await CafeSettings.updateHeroImage(null, cafeId);
     res.json({ 
       success: true, 
       message: 'Hero image removed successfully' 
@@ -3603,7 +3771,11 @@ app.delete('/api/cafe-settings/hero-image', auth, async (req, res) => {
 // Remove cafe promo banner image
 app.delete('/api/cafe-settings/promo-banner-image', auth, async (req, res) => {
   try {
-    const updatedSettings = await CafeSettings.updatePromoBannerImage(null);
+    const cafeId = req.user?.cafe_id;
+    if (!cafeId) {
+      return res.status(400).json({ error: 'User must be associated with a cafe' });
+    }
+    const updatedSettings = await CafeSettings.updatePromoBannerImage(null, cafeId);
     res.json({ 
       success: true, 
       message: 'Promo banner image removed successfully' 
@@ -3617,7 +3789,11 @@ app.delete('/api/cafe-settings/promo-banner-image', auth, async (req, res) => {
 // Remove cafe logo
 app.delete('/api/cafe-settings/logo', auth, async (req, res) => {
   try {
-    const updatedSettings = await CafeSettings.updateLogo(null);
+    const cafeId = req.user?.cafe_id;
+    if (!cafeId) {
+      return res.status(400).json({ error: 'User must be associated with a cafe' });
+    }
+    const updatedSettings = await CafeSettings.updateLogo(null, cafeId);
     res.json({ 
       success: true, 
       message: 'Logo removed successfully' 
