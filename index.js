@@ -3217,7 +3217,11 @@ app.get('/api/menu/branding', async (req, res) => {
     res.json({
       hero_image_url: heroImageUrl,
       promo_banner_image_url: promoBannerImageUrl,
-      logo_url: logoUrl
+      logo_url: logoUrl,
+      cafe_name: cafe.name || null,
+      address: cafe.address || null,
+      phone: cafe.phone || null,
+      email: cafe.email || null
     });
   } catch (error) {
     console.error('Error fetching cafe branding:', error);
