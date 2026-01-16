@@ -3464,6 +3464,7 @@ app.get('/api/currency-settings/available', async (req, res) => {
 app.get('/api/cafe-settings', async (req, res) => {
   try {
     let cafeId = null;
+    let cafeSlug = req.query.cafeSlug || null;
     
     // Try to get cafeId from authenticated user first (if token provided)
     // Use auth middleware pattern but don't require it (allow unauthenticated access)
@@ -3479,13 +3480,15 @@ app.get('/api/cafe-settings', async (req, res) => {
           if (decoded.impersonatedCafeId) {
             // User is impersonating - use impersonated cafe_id
             cafeId = decoded.impersonatedCafeId;
-            console.log('[CAFE-SETTINGS] Using impersonated cafe_id:', cafeId);
+            cafeSlug = decoded.impersonatedCafeSlug || null;
+            console.log('[CAFE-SETTINGS] Using impersonated cafe_id:', cafeId, 'slug:', cafeSlug);
           } else {
-            // Normal user - get their cafe_id
+            // Normal user - get their cafe_id and slug
             const userWithCafe = await User.findByIdWithCafe(user.id);
             if (userWithCafe && userWithCafe.cafe_id) {
               cafeId = userWithCafe.cafe_id;
-              console.log('[CAFE-SETTINGS] Using user cafe_id:', cafeId);
+              cafeSlug = userWithCafe.cafe_slug || null;
+              console.log('[CAFE-SETTINGS] Using user cafe_id:', cafeId, 'slug:', cafeSlug);
             }
           }
         }
@@ -3497,12 +3500,12 @@ app.get('/api/cafe-settings', async (req, res) => {
     
     // If no cafeId from user, get cafe slug from query param or use default
     if (!cafeId) {
-      const cafeSlug = req.query.cafeSlug || 'default';
+      cafeSlug = req.query.cafeSlug || 'default';
       try {
         const cafe = await Cafe.getBySlug(cafeSlug);
         if (cafe) {
           cafeId = cafe.id;
-          console.log('[CAFE-SETTINGS] Using cafe slug to get cafe_id:', cafeId);
+          console.log('[CAFE-SETTINGS] Using cafe slug to get cafe_id:', cafeId, 'slug:', cafeSlug);
         }
       } catch (error) {
         // Cafe might not exist, use null (will get default settings)
@@ -3510,7 +3513,7 @@ app.get('/api/cafe-settings', async (req, res) => {
       }
     }
     
-    console.log('[CAFE-SETTINGS] Fetching settings', { cafeId, hasToken: !!token, cafeSlug: req.query.cafeSlug });
+    console.log('[CAFE-SETTINGS] Fetching settings', { cafeId, cafeSlug, hasToken: !!token });
     const cafeSettings = await CafeSettings.getCurrent(cafeId);
     console.log('[CAFE-SETTINGS] Settings retrieved', { 
       requestedCafeId: cafeId, 
