@@ -40,8 +40,10 @@ class CafeSettings {
         // - Default settings retrieval
         // Only warn in development to reduce noise
         if (process.env.NODE_ENV !== 'production') {
-          console.debug('cafe_id column exists but no cafeId provided to getCurrent() - using first active settings');
+          console.debug('cafe_id column exists but no cafeId provided to getCurrent() - returning default settings');
         }
+        // Return default settings instead of potentially wrong cafe's settings
+        return this.getDefaultSettings();
       }
       
       const [rows] = await pool.execute(`
@@ -57,7 +59,17 @@ class CafeSettings {
         return this.getDefaultSettings();
       }
 
-      return rows[0];
+      const settings = rows[0];
+      
+      // Verify cafe_id matches if both are provided and cafe_id column exists
+      if (hasCafeIdColumn && cafeId && settings.cafe_id && settings.cafe_id !== cafeId) {
+        console.error(`[CafeSettings.getCurrent] ERROR: cafe_id mismatch! Requested: ${cafeId}, Got: ${settings.cafe_id}`);
+        // Return default settings instead of wrong data
+        console.warn(`[CafeSettings.getCurrent] Returning default settings due to cafe_id mismatch`);
+        return this.getDefaultSettings();
+      }
+
+      return settings;
     } catch (error) {
       // If there's an error (e.g., table doesn't exist), return default settings
       console.warn('Error fetching cafe settings, returning defaults:', error.message);
@@ -253,25 +265,88 @@ class CafeSettings {
         console.log('[CafeSettings.update] Including cafe_id in insert:', settingsData.cafe_id);
       }
 
-      // Deactivate current settings - filter by cafe_id if provided
+      // Check if we should update existing record or create new one
       const hasCafeIdColumn = existingColumns.includes('cafe_id');
+      let shouldUpdate = false;
+      let existingSettingsId = null;
+      
       if (hasCafeIdColumn && settingsData.cafe_id) {
-        await connection.execute(
-          'UPDATE cafe_settings SET is_active = FALSE WHERE cafe_id = ?',
+        // Check if active settings exist for this cafe
+        const [existing] = await connection.execute(
+          'SELECT id FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE LIMIT 1',
           [settingsData.cafe_id]
         );
+        
+        if (existing.length > 0) {
+          shouldUpdate = true;
+          existingSettingsId = existing[0].id;
+          console.log('[CafeSettings.update] Updating existing settings record ID:', existingSettingsId);
+        } else {
+          console.log('[CafeSettings.update] No active settings found, creating new record');
+        }
       } else {
-        // Legacy: no cafe_id column, deactivate all
-        await connection.execute('UPDATE cafe_settings SET is_active = FALSE');
+        // Legacy: no cafe_id column, check if any active settings exist
+        const [existing] = await connection.execute(
+          'SELECT id FROM cafe_settings WHERE is_active = TRUE LIMIT 1'
+        );
+        
+        if (existing.length > 0) {
+          shouldUpdate = true;
+          existingSettingsId = existing[0].id;
+          console.log('[CafeSettings.update] Updating existing settings record ID:', existingSettingsId);
+        }
       }
-
-      // Insert new settings with dynamic columns
-      const insertQuery = `
-        INSERT INTO cafe_settings (${insertColumns.join(', ')}) 
-        VALUES (${insertPlaceholders.join(', ')})
-      `;
       
-      await connection.execute(insertQuery, insertValues);
+      if (shouldUpdate && existingSettingsId) {
+        // UPDATE existing record instead of creating new one
+        const updateFields = [];
+        const updateValues = [];
+        
+        // Build update fields (exclude id, is_active, created_at, updated_at, cafe_id)
+        insertColumns.forEach((col, index) => {
+          if (col !== 'id' && col !== 'is_active' && col !== 'created_at' && col !== 'cafe_id') {
+            updateFields.push(`${col} = ?`);
+            updateValues.push(insertValues[index]);
+          }
+        });
+        
+        // Always update updated_at
+        if (existingColumns.includes('updated_at')) {
+          updateFields.push('updated_at = NOW()');
+        }
+        
+        if (updateFields.length > 0) {
+          updateValues.push(existingSettingsId);
+          
+          const updateQuery = `
+            UPDATE cafe_settings 
+            SET ${updateFields.join(', ')}
+            WHERE id = ?
+          `;
+          
+          await connection.execute(updateQuery, updateValues);
+        }
+      } else {
+        // No existing active settings, create new record
+        // Deactivate any other active settings for this cafe (if cafe_id exists)
+        if (hasCafeIdColumn && settingsData.cafe_id) {
+          await connection.execute(
+            'UPDATE cafe_settings SET is_active = FALSE WHERE cafe_id = ?',
+            [settingsData.cafe_id]
+          );
+        } else {
+          // Legacy: no cafe_id column, deactivate all
+          await connection.execute('UPDATE cafe_settings SET is_active = FALSE');
+        }
+        
+        // Insert new settings with dynamic columns
+        const insertQuery = `
+          INSERT INTO cafe_settings (${insertColumns.join(', ')}) 
+          VALUES (${insertPlaceholders.join(', ')})
+        `;
+        
+        await connection.execute(insertQuery, insertValues);
+      }
 
       // Build history insert query (only use columns that exist in history table)
       const [historyColumns] = await connection.execute(`

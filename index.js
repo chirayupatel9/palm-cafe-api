@@ -737,11 +737,22 @@ app.get('/api/superadmin/cafes/:id/metrics', auth, requireSuperAdmin, async (req
 app.get('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    const cafeId = parseInt(id, 10);
+    
+    if (isNaN(cafeId)) {
+      return res.status(400).json({ error: 'Invalid cafe ID' });
+    }
     
     // Verify cafe exists
-    const cafe = await Cafe.getById(id);
+    const cafe = await Cafe.getById(cafeId);
     if (!cafe) {
       return res.status(404).json({ error: 'Cafe not found' });
+    }
+    
+    // Verify the cafe ID matches
+    if (cafe.id !== cafeId) {
+      console.error(`[GET /api/superadmin/cafes/:id/settings] Cafe ID mismatch: requested ${cafeId}, got ${cafe.id}`);
+      return res.status(500).json({ error: 'Cafe ID mismatch' });
     }
     
     // Get cafe settings (scoped to cafe_id if column exists)
@@ -758,9 +769,20 @@ app.get('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (re
       if (columns.length > 0) {
         const [rows] = await pool.execute(
           'SELECT * FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1',
-          [id]
+          [cafeId]
         );
-        settings = rows[0] || null;
+        
+        if (rows.length > 0) {
+          // Verify the settings belong to the correct cafe
+          if (rows[0].cafe_id !== cafeId) {
+            console.error(`[GET /api/superadmin/cafes/:id/settings] Settings cafe_id mismatch: requested ${cafeId}, got ${rows[0].cafe_id}`);
+            settings = null;
+          } else {
+            settings = rows[0];
+          }
+        } else {
+          settings = null;
+        }
       } else {
         // Fallback to global settings if cafe_id column doesn't exist
         settings = await CafeSettings.getCurrent();
@@ -775,6 +797,7 @@ app.get('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (re
         settings: settings || {}
       });
     } catch (error) {
+      console.error('Error fetching cafe settings:', error);
       // If cafe_settings table doesn't exist, return empty settings
       res.json({
         cafe: {
@@ -795,12 +818,24 @@ app.get('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (re
 app.put('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    const cafeId = parseInt(id, 10);
+    
+    if (isNaN(cafeId)) {
+      return res.status(400).json({ error: 'Invalid cafe ID' });
+    }
+    
     const settingsData = req.body;
     
     // Verify cafe exists
-    const cafe = await Cafe.getById(id);
+    const cafe = await Cafe.getById(cafeId);
     if (!cafe) {
       return res.status(404).json({ error: 'Cafe not found' });
+    }
+    
+    // Verify the cafe ID matches
+    if (cafe.id !== cafeId) {
+      console.error(`[PUT /api/superadmin/cafes/:id/settings] Cafe ID mismatch: requested ${cafeId}, got ${cafe.id}`);
+      return res.status(500).json({ error: 'Cafe ID mismatch' });
     }
     
     // Check if cafe_settings table has cafe_id column
@@ -818,11 +853,17 @@ app.put('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (re
     
     // Update or create cafe settings
     const [existing] = await pool.execute(
-      'SELECT id FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE',
-      [id]
+      'SELECT id, cafe_id FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE',
+      [cafeId]
     );
     
     if (existing.length > 0) {
+      // Verify existing settings belong to the correct cafe
+      if (existing[0].cafe_id !== cafeId) {
+        console.error(`[PUT /api/superadmin/cafes/:id/settings] Existing settings cafe_id mismatch: requested ${cafeId}, got ${existing[0].cafe_id}`);
+        return res.status(500).json({ error: 'Settings cafe_id mismatch' });
+      }
+      
       // Update existing settings
       const updateFields = Object.keys(settingsData)
         .filter(key => key !== 'id' && key !== 'cafe_id' && key !== 'created_at' && key !== 'updated_at')
@@ -833,33 +874,65 @@ app.put('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (re
         .filter(key => key !== 'id' && key !== 'cafe_id' && key !== 'created_at' && key !== 'updated_at')
         .map(key => settingsData[key]);
       
-      updateValues.push(id);
+      updateValues.push(cafeId);
       
       await pool.execute(
         `UPDATE cafe_settings SET ${updateFields}, updated_at = CURRENT_TIMESTAMP WHERE cafe_id = ? AND is_active = TRUE`,
         updateValues
       );
     } else {
-      // Create new settings
-      const fields = ['cafe_id', ...Object.keys(settingsData).filter(key => key !== 'id' && key !== 'created_at' && key !== 'updated_at')];
-      const placeholders = fields.map(() => '?').join(', ');
-      const values = [id, ...Object.values(settingsData)];
-      
-      await pool.execute(
-        `INSERT INTO cafe_settings (${fields}, is_active, created_at, updated_at) VALUES (${placeholders}, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-        values
+      // Check if there are inactive settings we can reactivate
+      const [inactiveSettings] = await pool.execute(
+        'SELECT id FROM cafe_settings WHERE cafe_id = ? ORDER BY created_at DESC LIMIT 1',
+        [cafeId]
       );
+      
+      if (inactiveSettings.length > 0) {
+        // Reactivate and update existing inactive settings
+        const updateFields = Object.keys(settingsData)
+          .filter(key => key !== 'id' && key !== 'cafe_id' && key !== 'created_at' && key !== 'updated_at')
+          .map(key => `${key} = ?`)
+          .join(', ');
+        
+        const updateValues = Object.keys(settingsData)
+          .filter(key => key !== 'id' && key !== 'cafe_id' && key !== 'created_at' && key !== 'updated_at')
+          .map(key => settingsData[key]);
+        
+        updateValues.push(cafeId);
+        
+        await pool.execute(
+          `UPDATE cafe_settings SET ${updateFields}, is_active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE cafe_id = ?`,
+          updateValues
+        );
+      } else {
+        // No existing settings at all, create new one
+        const fields = ['cafe_id', ...Object.keys(settingsData).filter(key => key !== 'id' && key !== 'cafe_id' && key !== 'created_at' && key !== 'updated_at')];
+        const placeholders = fields.map(() => '?').join(', ');
+        const values = [cafeId, ...Object.keys(settingsData)
+          .filter(key => key !== 'id' && key !== 'cafe_id' && key !== 'created_at' && key !== 'updated_at')
+          .map(key => settingsData[key])];
+        
+        await pool.execute(
+          `INSERT INTO cafe_settings (${fields.join(', ')}, is_active, created_at, updated_at) VALUES (${placeholders}, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          values
+        );
+      }
     }
     
     // Fetch updated settings
     const [updated] = await pool.execute(
       'SELECT * FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1',
-      [id]
+      [cafeId]
     );
+    
+    if (updated.length > 0 && updated[0].cafe_id !== cafeId) {
+      console.error(`[PUT /api/superadmin/cafes/:id/settings] Updated settings cafe_id mismatch: requested ${cafeId}, got ${updated[0].cafe_id}`);
+      return res.status(500).json({ error: 'Updated settings cafe_id mismatch' });
+    }
     
     res.json({
       message: 'Cafe settings updated successfully',
-      settings: updated[0]
+      settings: updated[0] || {}
     });
   } catch (error) {
     console.error('Error updating cafe settings:', error);
@@ -871,10 +944,22 @@ app.put('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (re
 app.get('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const cafe = await Cafe.getById(id);
+    const cafeId = parseInt(id, 10);
+    
+    if (isNaN(cafeId)) {
+      return res.status(400).json({ error: 'Invalid cafe ID' });
+    }
+    
+    const cafe = await Cafe.getById(cafeId);
     
     if (!cafe) {
       return res.status(404).json({ error: 'Cafe not found' });
+    }
+    
+    // Verify the cafe ID matches
+    if (cafe.id !== cafeId) {
+      console.error(`[GET /api/superadmin/cafes/:id] Cafe ID mismatch: requested ${cafeId}, got ${cafe.id}`);
+      return res.status(500).json({ error: 'Cafe ID mismatch' });
     }
     
     // Also fetch cafe settings to include branding
@@ -903,20 +988,26 @@ app.get('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
           // Build dynamic SELECT query based on existing columns
           const selectColumns = existingColorColumns.join(', ');
           
+          // Explicitly filter by cafe_id to ensure correct data
           const [settings] = await pool.execute(
-            `SELECT ${selectColumns} FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1`,
-            [id]
+            `SELECT ${selectColumns}, cafe_id FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1`,
+            [cafeId]
           );
           
           if (settings.length > 0) {
-            if (existingColorColumns.includes('primary_color') && settings[0].primary_color) {
-              cafe.primary_color = settings[0].primary_color;
-            }
-            if (existingColorColumns.includes('accent_color') && settings[0].accent_color) {
-              cafe.accent_color = settings[0].accent_color;
-            }
-            if (existingColorColumns.includes('logo_url') && settings[0].logo_url) {
-              cafe.logo_url = settings[0].logo_url;
+            // Verify the settings belong to the correct cafe
+            if (settings[0].cafe_id !== cafeId) {
+              console.error(`[GET /api/superadmin/cafes/:id] Settings cafe_id mismatch: requested ${cafeId}, got ${settings[0].cafe_id}`);
+            } else {
+              if (existingColorColumns.includes('primary_color') && settings[0].primary_color) {
+                cafe.primary_color = settings[0].primary_color;
+              }
+              if (existingColorColumns.includes('accent_color') && settings[0].accent_color) {
+                cafe.accent_color = settings[0].accent_color;
+              }
+              if (existingColorColumns.includes('logo_url') && settings[0].logo_url) {
+                cafe.logo_url = settings[0].logo_url;
+              }
             }
           }
         }
@@ -937,6 +1028,12 @@ app.get('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
 app.put('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    const cafeId = parseInt(id, 10);
+    
+    if (isNaN(cafeId)) {
+      return res.status(400).json({ error: 'Invalid cafe ID' });
+    }
+    
     const { slug, name, description, logo_url, address, phone, email, website, is_active, primary_color, accent_color } = req.body;
 
     // Validate slug format if provided
@@ -946,13 +1043,13 @@ app.put('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
 
     // Check if slug already exists (excluding current cafe)
     if (slug) {
-      const slugExists = await Cafe.slugExists(slug, id);
+      const slugExists = await Cafe.slugExists(slug, cafeId);
       if (slugExists) {
         return res.status(400).json({ error: 'A cafe with this slug already exists' });
       }
     }
 
-    const cafe = await Cafe.update(id, {
+    const cafe = await Cafe.update(cafeId, {
       slug,
       name,
       description,
@@ -971,7 +1068,7 @@ app.put('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
     if (primary_color !== undefined || accent_color !== undefined || logo_url !== undefined) {
       try {
         // Check if cafe_settings table has cafe_id column
-        const [columns] = await pool.execute(`
+        const [cafeIdColumns] = await pool.execute(`
           SELECT COLUMN_NAME 
           FROM INFORMATION_SCHEMA.COLUMNS 
           WHERE TABLE_SCHEMA = DATABASE() 
@@ -979,22 +1076,26 @@ app.put('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
           AND COLUMN_NAME = 'cafe_id'
         `);
         
-        if (columns.length > 0) {
+        if (cafeIdColumns.length > 0) {
           // Get current cafe settings
           const [existing] = await pool.execute(
             'SELECT * FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1',
-            [id]
+            [cafeId]
           );
           
-          // Check which columns exist in cafe_settings table
-          const [columns] = await pool.execute(`
-            SELECT COLUMN_NAME 
-            FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_SCHEMA = DATABASE() 
-            AND TABLE_NAME = 'cafe_settings'
-          `);
-          
-          const existingColumns = columns.map(col => col.COLUMN_NAME);
+          // Verify existing settings belong to the correct cafe
+          if (existing.length > 0 && existing[0].cafe_id !== cafeId) {
+            console.error(`[PUT /api/superadmin/cafes/:id] Existing settings cafe_id mismatch: requested ${cafeId}, got ${existing[0].cafe_id}`);
+          } else {
+            // Check which columns exist in cafe_settings table
+            const [allColumns] = await pool.execute(`
+              SELECT COLUMN_NAME 
+              FROM INFORMATION_SCHEMA.COLUMNS 
+              WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'cafe_settings'
+            `);
+            
+            const existingColumns = allColumns.map(col => col.COLUMN_NAME);
           
           const brandingUpdates = {};
           // Only include columns that actually exist in the database
@@ -1008,27 +1109,46 @@ app.put('/api/superadmin/cafes/:id', auth, requireSuperAdmin, async (req, res) =
             brandingUpdates.logo_url = logo_url;
           }
           
-          if (Object.keys(brandingUpdates).length > 0) {
-            if (existing.length > 0) {
-              // Update existing settings
-              const updateFields = Object.keys(brandingUpdates).map(key => `${key} = ?`).join(', ');
-              const updateValues = Object.values(brandingUpdates);
-              updateValues.push(id);
-              
-              await pool.execute(
-                `UPDATE cafe_settings SET ${updateFields}, updated_at = CURRENT_TIMESTAMP WHERE cafe_id = ? AND is_active = TRUE`,
-                updateValues
-              );
-            } else {
-              // Create new settings with branding - only include columns that exist
-              const fields = ['cafe_id', 'cafe_name', ...Object.keys(brandingUpdates)];
-              const placeholders = fields.map(() => '?').join(', ');
-              const values = [id, cafe.name, ...Object.values(brandingUpdates)];
-              
-              await pool.execute(
-                `INSERT INTO cafe_settings (${fields.join(', ')}, is_active, created_at, updated_at) VALUES (${placeholders}, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-                values
-              );
+            if (Object.keys(brandingUpdates).length > 0) {
+              if (existing.length > 0 && existing[0].cafe_id === cafeId) {
+                // Update existing active settings
+                const updateFields = Object.keys(brandingUpdates).map(key => `${key} = ?`).join(', ');
+                const updateValues = Object.values(brandingUpdates);
+                updateValues.push(cafeId);
+                
+                await pool.execute(
+                  `UPDATE cafe_settings SET ${updateFields}, updated_at = CURRENT_TIMESTAMP WHERE cafe_id = ? AND is_active = TRUE`,
+                  updateValues
+                );
+              } else {
+                // Check if there are any inactive settings we can reactivate
+                const [inactiveSettings] = await pool.execute(
+                  'SELECT id FROM cafe_settings WHERE cafe_id = ? ORDER BY created_at DESC LIMIT 1',
+                  [cafeId]
+                );
+                
+                if (inactiveSettings.length > 0) {
+                  // Reactivate and update existing inactive settings
+                  const updateFields = Object.keys(brandingUpdates).map(key => `${key} = ?`).join(', ');
+                  const updateValues = Object.values(brandingUpdates);
+                  updateValues.push(cafeId);
+                  
+                  await pool.execute(
+                    `UPDATE cafe_settings SET ${updateFields}, is_active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE cafe_id = ?`,
+                    updateValues
+                  );
+                } else {
+                  // No existing settings at all, create new one
+                  const fields = ['cafe_id', 'cafe_name', ...Object.keys(brandingUpdates)];
+                  const placeholders = fields.map(() => '?').join(', ');
+                  const values = [cafeId, cafe.name, ...Object.values(brandingUpdates)];
+                  
+                  await pool.execute(
+                    `INSERT INTO cafe_settings (${fields.join(', ')}, is_active, created_at, updated_at) VALUES (${placeholders}, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                    values
+                  );
+                }
+              }
             }
           }
         }
@@ -3346,6 +3466,7 @@ app.get('/api/cafe-settings', async (req, res) => {
     let cafeId = null;
     
     // Try to get cafeId from authenticated user first (if token provided)
+    // Use auth middleware pattern but don't require it (allow unauthenticated access)
     const token = req.header('Authorization')?.replace('Bearer ', '');
     if (token) {
       try {
@@ -3354,13 +3475,23 @@ app.get('/api/cafe-settings', async (req, res) => {
         const decoded = jwt.verify(token, JWT_SECRET, { clockTolerance: 600 });
         const user = await User.findById(decoded.userId);
         if (user) {
-          const userWithCafe = await User.findByIdWithCafe(user.id);
-          if (userWithCafe && userWithCafe.cafe_id) {
-            cafeId = userWithCafe.cafe_id;
+          // Check for impersonation context in token
+          if (decoded.impersonatedCafeId) {
+            // User is impersonating - use impersonated cafe_id
+            cafeId = decoded.impersonatedCafeId;
+            console.log('[CAFE-SETTINGS] Using impersonated cafe_id:', cafeId);
+          } else {
+            // Normal user - get their cafe_id
+            const userWithCafe = await User.findByIdWithCafe(user.id);
+            if (userWithCafe && userWithCafe.cafe_id) {
+              cafeId = userWithCafe.cafe_id;
+              console.log('[CAFE-SETTINGS] Using user cafe_id:', cafeId);
+            }
           }
         }
       } catch (error) {
         // Token invalid or expired, continue as unauthenticated user
+        console.log('[CAFE-SETTINGS] Token invalid, continuing as unauthenticated');
       }
     }
     
@@ -3371,20 +3502,35 @@ app.get('/api/cafe-settings', async (req, res) => {
         const cafe = await Cafe.getBySlug(cafeSlug);
         if (cafe) {
           cafeId = cafe.id;
+          console.log('[CAFE-SETTINGS] Using cafe slug to get cafe_id:', cafeId);
         }
       } catch (error) {
         // Cafe might not exist, use null (will get default settings)
+        console.log('[CAFE-SETTINGS] Cafe not found for slug:', cafeSlug);
       }
     }
     
     console.log('[CAFE-SETTINGS] Fetching settings', { cafeId, hasToken: !!token, cafeSlug: req.query.cafeSlug });
     const cafeSettings = await CafeSettings.getCurrent(cafeId);
     console.log('[CAFE-SETTINGS] Settings retrieved', { 
-      cafeId, 
+      requestedCafeId: cafeId, 
+      settingsCafeId: cafeSettings.cafe_id,
+      cafe_name: cafeSettings.cafe_name,
       hasHero: !!cafeSettings.hero_image_url,
       hasPromo: !!cafeSettings.promo_banner_image_url,
       hasLogo: !!cafeSettings.logo_url
     });
+    
+    // Verify cafe_id matches if both are present
+    if (cafeId && cafeSettings.cafe_id && cafeSettings.cafe_id !== cafeId) {
+      console.error(`[CAFE-SETTINGS] ERROR: cafe_id mismatch! Requested: ${cafeId}, Got: ${cafeSettings.cafe_id}`);
+      // Return error instead of wrong data
+      return res.status(500).json({ 
+        error: 'Cafe settings data mismatch. Please contact support.',
+        details: `Requested cafe ID: ${cafeId}, but settings belong to cafe ID: ${cafeSettings.cafe_id}`
+      });
+    }
+    
     res.json(cafeSettings);
   } catch (error) {
     console.error('Error fetching cafe settings:', error);
@@ -3436,7 +3582,42 @@ app.put('/api/cafe-settings', auth, async (req, res) => {
       });
     }
 
+    // Get cafe_id from authenticated user (handles impersonation too)
+    let cafeId = null;
+    if (req.user) {
+      // Check if impersonating
+      if (req.impersonation && req.impersonation.isImpersonating) {
+        cafeId = req.impersonation.cafeId;
+      } else if (req.user.cafe_id) {
+        cafeId = req.user.cafe_id;
+      }
+    }
+    
+    // If no cafe_id from user, try to get from cafe_name by looking up the cafe
+    if (!cafeId && cafe_name) {
+      try {
+        // Try to find cafe by name (fuzzy match)
+        const cafes = await Cafe.getAll();
+        const matchingCafe = cafes.find(c => 
+          c.name.toLowerCase() === cafe_name.toLowerCase().trim()
+        );
+        if (matchingCafe) {
+          cafeId = matchingCafe.id;
+          console.log('[PUT /api/cafe-settings] Found cafe_id from cafe_name:', cafeId);
+        }
+      } catch (error) {
+        console.warn('[PUT /api/cafe-settings] Could not lookup cafe by name:', error);
+      }
+    }
+    
+    if (!cafeId) {
+      return res.status(400).json({ 
+        error: 'Unable to determine cafe. Please ensure you are logged in and belong to a cafe.' 
+      });
+    }
+
     const updatedSettings = await CafeSettings.update({
+      cafe_id: cafeId,
       cafe_name: cafe_name.trim(),
       logo_url: logo_url || '/images/palm-cafe-logo.png',
       address: address || '',
