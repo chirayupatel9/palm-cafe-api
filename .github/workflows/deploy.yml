@@ -1,0 +1,17 @@
+name: Deploy Backend to Raspberry Pi
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    
+    steps:
+    - name: Deploy Backend
+      run: |
+        cd /home/chirayu/palm-cafe/palm-cafe-api
+        git pull origin master
+        npm install
+        pm2 restart palm-cafe-api
