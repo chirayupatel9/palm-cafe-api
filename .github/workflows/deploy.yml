@@ -14,4 +14,4 @@ jobs:
         cd /home/chirayu/palm-cafe/palm-cafe-api
         git pull origin master
         npm install
-        pm2 restart palm-cafe-api
+        pm2 restart cafe-api
