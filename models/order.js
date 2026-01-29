@@ -264,22 +264,22 @@ class Order {
 
       const orderId = orderResult.insertId;
 
-      // Create order items
-      for (const item of items) {
-        // Handle undefined values for order items
-        const safeMenuItemId = item.menu_item_id || item.id || null;
-        const safeItemName = item.name || null;
-        const safeQuantity = item.quantity || 0;
-        const safeUnitPrice = item.price || 0;
-        const safeTotalPrice = item.total || 0;
-        
+      // Batch insert order items (single query instead of N for faster response)
+      if (items.length > 0) {
+        const itemRows = items.map(item => {
+          const safeMenuItemId = item.menu_item_id || item.id || null;
+          const safeItemName = item.name || null;
+          const safeQuantity = item.quantity || 0;
+          const safeUnitPrice = item.price || 0;
+          const safeTotalPrice = item.total || 0;
+          return [orderId, safeMenuItemId, safeItemName, safeQuantity, safeUnitPrice, safeTotalPrice];
+        });
+        const placeholders = itemRows.map(() => '(?, ?, ?, ?, ?, ?)').join(', ');
+        const flatParams = itemRows.flat();
         await connection.execute(`
-          INSERT INTO order_items (
-            order_id, menu_item_id, item_name, quantity, unit_price, total_price
-          ) VALUES (?, ?, ?, ?, ?, ?)
-        `, [
-          orderId, safeMenuItemId, safeItemName, safeQuantity, safeUnitPrice, safeTotalPrice
-        ]);
+          INSERT INTO order_items (order_id, menu_item_id, item_name, quantity, unit_price, total_price)
+          VALUES ${placeholders}
+        `, flatParams);
       }
 
       await connection.commit();

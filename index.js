@@ -5952,33 +5952,26 @@ app.post('/api/customer/orders', async (req, res) => {
 
     // Calculate subtotal
     const subtotal = items.reduce((sum, item) => sum + (parseFloat(item.price) * item.quantity), 0);
-    
-    // Calculate tax
-    const taxCalculation = await TaxSettings.calculateTax(subtotal);
-    
+    const cafeSlug = req.query.cafeSlug || req.body.cafeSlug || 'default';
+
+    // Fetch tax and cafe in parallel to reduce response time
+    const [taxCalculation, cafe] = await Promise.all([
+      TaxSettings.calculateTax(subtotal),
+      Cafe.getBySlug(cafeSlug)
+    ]);
+
+    const cafeId = cafe ? cafe.id : null;
+    if (!cafeId) {
+      return res.status(400).json({
+        error: 'Unable to determine cafe. Please provide a valid cafe slug.'
+      });
+    }
+
     // Calculate total
     const tipAmountNum = parseFloat(tipAmount) || 0;
     const pointsRedeemedNum = parseInt(pointsRedeemed) || 0;
     const pointsDiscount = pointsRedeemedNum * 0.1; // 1 point = 0.1 INR
     const total = subtotal + taxCalculation.taxAmount + tipAmountNum - pointsDiscount;
-
-    // Get cafe_id from cafe slug or query param (for public customer orders)
-    let cafeId = null;
-    const cafeSlug = req.query.cafeSlug || req.body.cafeSlug || 'default';
-    try {
-      const cafe = await Cafe.getBySlug(cafeSlug);
-      if (cafe) {
-        cafeId = cafe.id;
-      }
-    } catch (error) {
-      console.warn('[POST /api/customer/orders] Could not find cafe by slug:', cafeSlug);
-    }
-    
-    if (!cafeId) {
-      return res.status(400).json({ 
-        error: 'Unable to determine cafe. Please provide a valid cafe slug.' 
-      });
-    }
 
     // Check if customer exists or create new one (scoped to this cafe)
     let customer = null;
@@ -6001,6 +5994,7 @@ app.post('/api/customer/orders', async (req, res) => {
 
     // Create order data (never store literal "undefined" for customer_phone or customer_name)
     const orderData = {
+      cafe_id: cafeId,
       customer_name: sanitizeString(customerName),
       customer_email: sanitizeString(customerEmail),
       customer_phone: customerPhone,

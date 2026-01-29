@@ -1,5 +1,9 @@
 const { pool } = require('../config/database');
 
+// In-memory cache for getBySlug to reduce DB load on login/order creation (TTL 60s)
+const CAFE_SLUG_CACHE_TTL_MS = 60000;
+const cafeBySlugCache = new Map();
+
 /**
  * Cafe Model
  * Handles all cafe-related database operations for multi-tenant support
@@ -130,16 +134,23 @@ class Cafe {
   }
 
   /**
-   * Get cafe by slug
+   * Get cafe by slug (cached 60s to reduce DB load on login/order creation)
    */
   static async getBySlug(slug) {
+    const key = (slug || '').toLowerCase();
+    const cached = cafeBySlugCache.get(key);
+    if (cached && cached.expiry > Date.now()) {
+      return cached.cafe;
+    }
+
     try {
       const [rows] = await pool.execute(
         'SELECT * FROM cafes WHERE slug = ? AND is_active = TRUE',
-        [slug.toLowerCase()]
+        [key]
       );
 
       if (rows.length === 0) {
+        cafeBySlugCache.set(key, { cafe: null, expiry: Date.now() + CAFE_SLUG_CACHE_TTL_MS });
         return null;
       }
 
@@ -171,6 +182,7 @@ class Cafe {
         cafe.onboarding_data = null;
       }
 
+      cafeBySlugCache.set(key, { cafe, expiry: Date.now() + CAFE_SLUG_CACHE_TTL_MS });
       return cafe;
     } catch (error) {
       throw new Error(`Error fetching cafe by slug: ${error.message}`);
