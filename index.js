@@ -37,6 +37,7 @@ const { requireFeature, requireActiveSubscription } = require('./middleware/subs
 const { requireOnboarding, allowOnboardingRoutes } = require('./middleware/onboardingAuth');
 const logger = require('./config/logger');
 const { generalLimiter, authLimiter, uploadLimiter, apiLimiter } = require('./middleware/rateLimiter');
+const { isMalformedString, sanitizeString, parsePositiveId, validateRequiredString } = require('./middleware/validateInput');
 const PaymentMethod = require('./models/paymentMethod');
 
 const app = express();
@@ -5888,11 +5889,8 @@ const generateThermalPrintContent = async (order) => {
   return content;
 };
 
-// Treat customer_phone as invalid if missing, empty, or the literal "undefined"
 function isInvalidCustomerPhone(value) {
-  if (value == null) return true;
-  const s = String(value).trim();
-  return s === '' || s === 'undefined';
+  return isMalformedString(value) || String(value).trim() === '';
 }
 
 // Order endpoints
@@ -5903,10 +5901,8 @@ app.get('/api/orders', auth, requireActiveSubscription, async (req, res) => {
 
     let orders;
     if (customer_phone && !isInvalidCustomerPhone(customer_phone)) {
-      // Filter orders by customer phone
       orders = await Order.getByCustomerPhone(customer_phone);
-    } else if (order_number) {
-      // Filter orders by order number
+    } else if (order_number && !isMalformedString(order_number)) {
       orders = await Order.getByOrderNumber(order_number);
     } else {
       // Get all orders
@@ -5942,8 +5938,12 @@ app.post('/api/customer/orders', async (req, res) => {
   try {
     let { customerName, customerPhone, customerEmail, tableNumber, paymentMethod, items, tipAmount, pointsRedeemed, date, pickupOption } = req.body;
 
-    if (!customerName || !items || items.length === 0) {
-      return res.status(400).json({ error: 'Customer name and items are required' });
+    const nameErr = validateRequiredString(customerName, 'Customer name');
+    if (nameErr) {
+      return res.status(400).json({ error: nameErr });
+    }
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'At least one order item is required' });
     }
 
     if (isInvalidCustomerPhone(customerPhone)) {
@@ -5999,10 +5999,10 @@ app.post('/api/customer/orders', async (req, res) => {
       }
     }
 
-    // Create order data (never store literal "undefined" for customer_phone)
+    // Create order data (never store literal "undefined" for customer_phone or customer_name)
     const orderData = {
-      customer_name: customerName,
-      customer_email: (customerEmail && String(customerEmail).trim() !== '' && String(customerEmail) !== 'undefined') ? customerEmail : null,
+      customer_name: sanitizeString(customerName),
+      customer_email: sanitizeString(customerEmail),
       customer_phone: customerPhone,
       table_number: tableNumber || null,
       items: items.map(item => ({
@@ -6306,13 +6306,16 @@ app.get('/api/customers', auth, async (req, res) => {
 // Get customer by ID
 app.get('/api/customers/:id', auth, async (req, res) => {
   try {
-    const { id } = req.params;
-    const customer = await Customer.getById(id);
-    
+    const customerId = parsePositiveId(req.params.id);
+    if (!customerId) {
+      return res.status(400).json({ error: 'Invalid customer ID' });
+    }
+    const customer = await Customer.getById(customerId);
+
     if (!customer) {
       return res.status(404).json({ error: 'Customer not found' });
     }
-    
+
     res.json(customer);
   } catch (error) {
     console.error('Error fetching customer:', error);
@@ -6326,13 +6329,15 @@ app.post('/api/customer/login', async (req, res) => {
   try {
     const { phone, cafeSlug } = req.body;
     
-    if (!phone) {
-      return res.status(400).json({ error: 'Phone number is required' });
+    const phoneErr = validateRequiredString(phone, 'Phone number');
+    if (phoneErr) {
+      return res.status(400).json({ error: phoneErr });
     }
-    
-    // Get cafe_id from cafe slug (for public customer login)
+
     let cafeId = null;
-    const slug = cafeSlug || req.query.cafeSlug || 'default';
+    const slug = sanitizeString(cafeSlug || req.query.cafeSlug) || 'default';
+
+    // Get cafe_id from cafe slug (for public customer login)
     try {
       const cafe = await Cafe.getBySlug(slug);
       if (cafe) {
@@ -6343,7 +6348,8 @@ app.post('/api/customer/login', async (req, res) => {
     }
     
     // Find customer scoped to this cafe
-    const customer = await Customer.findByEmailOrPhone(null, phone, cafeId);
+    const phoneVal = sanitizeString(phone);
+    const customer = await Customer.findByEmailOrPhone(null, phoneVal, cafeId);
     
     if (customer) {
       // Return customer data; include phone so the client can fetch order history
@@ -6377,14 +6383,20 @@ app.post('/api/customer/login', async (req, res) => {
 app.post('/api/customer/register', async (req, res) => {
   try {
     const { name, email, phone, address, date_of_birth, notes, cafeSlug } = req.body;
-    
-    if (!name || !phone) {
-      return res.status(400).json({ error: 'Customer name and phone number are required' });
+
+    const nameErr = validateRequiredString(name, 'Customer name');
+    if (nameErr) {
+      return res.status(400).json({ error: nameErr });
+    }
+    const phoneErr = validateRequiredString(phone, 'Phone number');
+    if (phoneErr) {
+      return res.status(400).json({ error: phoneErr });
     }
 
-    // Get cafe_id from cafe slug (for public customer registration)
     let cafeId = null;
-    const slug = cafeSlug || req.query.cafeSlug || 'default';
+    const slug = sanitizeString(cafeSlug || req.query.cafeSlug) || 'default';
+
+    // Get cafe_id from cafe slug (for public customer registration)
     try {
       const cafe = await Cafe.getBySlug(slug);
       if (cafe) {
@@ -6400,21 +6412,21 @@ app.post('/api/customer/register', async (req, res) => {
       });
     }
 
+    const customerData = {
+      name: sanitizeString(name),
+      email: sanitizeString(email),
+      phone: sanitizeString(phone),
+      address: sanitizeString(address),
+      date_of_birth: date_of_birth && !isMalformedString(date_of_birth) ? String(date_of_birth).trim() : null,
+      notes: sanitizeString(notes),
+      cafe_id: cafeId
+    };
+
     // Check if customer already exists (scoped to this cafe)
-    const existingCustomer = await Customer.findByEmailOrPhone(email, phone, cafeId);
+    const existingCustomer = await Customer.findByEmailOrPhone(customerData.email, customerData.phone, cafeId);
     if (existingCustomer) {
       return res.status(400).json({ error: 'Customer with this phone number already exists' });
     }
-
-    const customerData = {
-      name: name.trim(),
-      email: email ? email.trim() : null,
-      phone: phone.trim(),
-      address: address ? address.trim() : null,
-      date_of_birth: date_of_birth || null,
-      notes: notes ? notes.trim() : null,
-      cafe_id: cafeId
-    };
 
     const customer = await Customer.create(customerData);
     res.status(201).json(customer);
@@ -6428,31 +6440,33 @@ app.post('/api/customer/register', async (req, res) => {
 app.put('/api/customer/profile', async (req, res) => {
   try {
     const { id, name, email, address, date_of_birth } = req.body;
-    
-    if (!id) {
-      return res.status(400).json({ error: 'Customer ID is required' });
+
+    const customerId = parsePositiveId(id);
+    if (!customerId) {
+      return res.status(400).json({ error: 'Customer ID is required and must be a valid number' });
     }
-    
-    if (!name) {
-      return res.status(400).json({ error: 'Customer name is required' });
+
+    const nameErr = validateRequiredString(name, 'Customer name');
+    if (nameErr) {
+      return res.status(400).json({ error: nameErr });
     }
 
     // Verify customer exists
-    const existingCustomer = await Customer.getById(id);
+    const existingCustomer = await Customer.getById(customerId);
     if (!existingCustomer) {
       return res.status(404).json({ error: 'Customer not found' });
     }
 
     const customerData = {
-      name: name.trim(),
-      email: email ? email.trim() : null,
-      address: address ? address.trim() : null,
-      date_of_birth: date_of_birth || null
+      name: sanitizeString(name),
+      email: sanitizeString(email),
+      address: sanitizeString(address),
+      date_of_birth: date_of_birth && !isMalformedString(date_of_birth) ? String(date_of_birth).trim() : null
     };
 
-    const customer = await Customer.update(id, customerData);
+    const customer = await Customer.update(customerId, customerData);
     
-    // Return sanitized customer data (without phone number for security)
+    // Return sanitized customer data (without phone in response for security)
     const sanitizedCustomer = {
       id: customer.id,
       name: customer.name,
@@ -6553,24 +6567,28 @@ app.post('/api/customers', auth, async (req, res) => {
 // Update customer
 app.put('/api/customers/:id', auth, async (req, res) => {
   try {
-    const { id } = req.params;
+    const customerId = parsePositiveId(req.params.id);
+    if (!customerId) {
+      return res.status(400).json({ error: 'Invalid customer ID' });
+    }
     const { name, email, phone, address, date_of_birth, notes, is_active } = req.body;
-    
-    if (!name) {
-      return res.status(400).json({ error: 'Customer name is required' });
+
+    const nameErr = validateRequiredString(name, 'Customer name');
+    if (nameErr) {
+      return res.status(400).json({ error: nameErr });
     }
 
     const customerData = {
-      name: name.trim(),
-      email: email ? email.trim() : null,
-      phone: phone ? phone.trim() : null,
-      address: address ? address.trim() : null,
-      date_of_birth: date_of_birth || null,
-      notes: notes ? notes.trim() : null,
+      name: sanitizeString(name),
+      email: sanitizeString(email),
+      phone: sanitizeString(phone),
+      address: sanitizeString(address),
+      date_of_birth: date_of_birth && !isMalformedString(date_of_birth) ? String(date_of_birth).trim() : null,
+      notes: sanitizeString(notes),
       is_active: is_active !== undefined ? is_active : true
     };
 
-    const customer = await Customer.update(id, customerData);
+    const customer = await Customer.update(customerId, customerData);
     res.json(customer);
   } catch (error) {
     console.error('Error updating customer:', error);
@@ -6581,8 +6599,11 @@ app.put('/api/customers/:id', auth, async (req, res) => {
 // Get customer order history
 app.get('/api/customers/:id/orders', auth, async (req, res) => {
   try {
-    const { id } = req.params;
-    const orders = await Customer.getOrderHistory(id);
+    const customerId = parsePositiveId(req.params.id);
+    if (!customerId) {
+      return res.status(400).json({ error: 'Invalid customer ID' });
+    }
+    const orders = await Customer.getOrderHistory(customerId);
     res.json(orders);
   } catch (error) {
     console.error('Error fetching customer orders:', error);
@@ -6594,14 +6615,17 @@ app.get('/api/customers/:id/orders', auth, async (req, res) => {
 // Redeem loyalty points
 app.post('/api/customers/:id/redeem-points', auth, async (req, res) => {
   try {
-    const { id } = req.params;
+    const customerId = parsePositiveId(req.params.id);
+    if (!customerId) {
+      return res.status(400).json({ error: 'Invalid customer ID' });
+    }
     const { points } = req.body;
-    
+
     if (!points || points <= 0) {
       return res.status(400).json({ error: 'Valid points amount is required' });
     }
 
-    const customer = await Customer.redeemPoints(id, points);
+    const customer = await Customer.redeemPoints(customerId, points);
     res.json(customer);
   } catch (error) {
     console.error('Error redeeming points:', error);
