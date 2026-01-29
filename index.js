@@ -6335,11 +6335,12 @@ app.post('/api/customer/login', async (req, res) => {
     const customer = await Customer.findByEmailOrPhone(null, phone, cafeId);
     
     if (customer) {
-      // Return customer data without sensitive information like phone number
+      // Return customer data; include phone so the client can fetch order history
       const sanitizedCustomer = {
         id: customer.id,
         name: customer.name,
         email: customer.email,
+        phone: customer.phone,
         address: customer.address,
         date_of_birth: customer.date_of_birth,
         loyalty_points: customer.loyalty_points,
