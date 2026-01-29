@@ -211,10 +211,10 @@ class Order {
       // Generate order number
       const orderNumber = `ORD${Date.now()}`;
 
-      // Handle undefined values by converting them to null
+      // Handle undefined values by converting them to null (never store literal "undefined")
       const safeCustomerName = customer_name || null;
       const safeCustomerEmail = customer_email || null;
-      const safeCustomerPhone = customer_phone || null;
+      const safeCustomerPhone = (customer_phone && String(customer_phone).trim() !== '' && String(customer_phone) !== 'undefined') ? customer_phone : null;
       const safeTotalAmount = total_amount || 0;
       const safeTaxAmount = tax_amount || 0;
       const safeTipAmount = tip_amount || 0;
@@ -373,10 +373,10 @@ class Order {
         notes
       } = orderData;
 
-      // Handle undefined values by converting them to null
+      // Handle undefined values by converting them to null (never store literal "undefined")
       const safeCustomerName = customer_name || null;
       const safeCustomerEmail = customer_email || null;
-      const safeCustomerPhone = customer_phone || null;
+      const safeCustomerPhone = (customer_phone && String(customer_phone).trim() !== '' && String(customer_phone) !== 'undefined') ? customer_phone : null;
       const safeTotalAmount = total_amount || 0;
       const safeTaxAmount = tax_amount || 0;
       const safeTipAmount = tip_amount || 0;

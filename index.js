@@ -5888,14 +5888,21 @@ const generateThermalPrintContent = async (order) => {
   return content;
 };
 
+// Treat customer_phone as invalid if missing, empty, or the literal "undefined"
+function isInvalidCustomerPhone(value) {
+  if (value == null) return true;
+  const s = String(value).trim();
+  return s === '' || s === 'undefined';
+}
+
 // Order endpoints
 // Get all orders (admin only)
 app.get('/api/orders', auth, requireActiveSubscription, async (req, res) => {
   try {
     const { customer_phone, order_number } = req.query;
-    
+
     let orders;
-    if (customer_phone) {
+    if (customer_phone && !isInvalidCustomerPhone(customer_phone)) {
       // Filter orders by customer phone
       orders = await Order.getByCustomerPhone(customer_phone);
     } else if (order_number) {
@@ -5917,11 +5924,11 @@ app.get('/api/orders', auth, requireActiveSubscription, async (req, res) => {
 app.get('/api/customer/orders', async (req, res) => {
   try {
     const { customer_phone } = req.query;
-    
-    if (!customer_phone) {
+
+    if (isInvalidCustomerPhone(customer_phone)) {
       return res.status(400).json({ error: 'Customer phone number is required' });
     }
-    
+
     const orders = await Order.getByCustomerPhone(customer_phone);
     res.json(orders);
   } catch (error) {
@@ -5933,10 +5940,14 @@ app.get('/api/customer/orders', async (req, res) => {
 // Create customer order (public endpoint)
 app.post('/api/customer/orders', async (req, res) => {
   try {
-    const { customerName, customerPhone, customerEmail, tableNumber, paymentMethod, items, tipAmount, pointsRedeemed, date, pickupOption } = req.body;
-    
+    let { customerName, customerPhone, customerEmail, tableNumber, paymentMethod, items, tipAmount, pointsRedeemed, date, pickupOption } = req.body;
+
     if (!customerName || !items || items.length === 0) {
       return res.status(400).json({ error: 'Customer name and items are required' });
+    }
+
+    if (isInvalidCustomerPhone(customerPhone)) {
+      customerPhone = null;
     }
 
     // Calculate subtotal
@@ -5988,10 +5999,10 @@ app.post('/api/customer/orders', async (req, res) => {
       }
     }
 
-    // Create order data
+    // Create order data (never store literal "undefined" for customer_phone)
     const orderData = {
       customer_name: customerName,
-      customer_email: customerEmail || null,
+      customer_email: (customerEmail && String(customerEmail).trim() !== '' && String(customerEmail) !== 'undefined') ? customerEmail : null,
       customer_phone: customerPhone,
       table_number: tableNumber || null,
       items: items.map(item => ({
