@@ -157,10 +157,11 @@ app.use('/images', express.static(path.join(__dirname, 'public', 'images')));
 
 // Generate PDF invoice
 const generatePDF = async (invoice) => {
-  // Get current currency settings with better error handling
+  // Get current currency settings with better error handling (scoped by invoice cafe)
   let currencySymbol = '₹'; // Default to INR symbol
+  const pdfCafeId = invoice.cafe_id || null;
   try {
-    const currencySettings = await CurrencySettings.getCurrent();
+    const currencySettings = await CurrencySettings.getCurrent(pdfCafeId);
     
     if (currencySettings && currencySettings.currency_symbol) {
       const symbol = String(currencySettings.currency_symbol).trim();
@@ -173,13 +174,13 @@ const generatePDF = async (invoice) => {
     console.error('Error fetching currency settings for PDF:', error);
     }
 
-  // Get cafe settings for dynamic content
+  // Get cafe settings for dynamic content (scoped by invoice cafe)
   let cafeSettings = {
     cafe_name: 'Cafe',
     logo_url: null
   };
   try {
-    const settings = await CafeSettings.getCurrent();
+    const settings = await CafeSettings.getCurrent(pdfCafeId);
     if (settings) {
       cafeSettings = settings;
       // Ensure cafe_name has a fallback
@@ -4233,10 +4234,11 @@ app.post('/api/menu/import-zip', auth, requireActiveSubscription, requireFeature
   }
 });
 
-// Get current tax settings (admin)
-app.get('/api/tax-settings', auth, async (req, res) => {
+// Get current tax settings (admin, cafe-scoped)
+app.get('/api/tax-settings', auth, requireOrderCafeScope, async (req, res) => {
   try {
-    const taxSettings = await TaxSettings.getCurrent();
+    const cafeId = getOrderCafeId(req);
+    const taxSettings = await TaxSettings.getCurrent(cafeId);
     res.json(taxSettings);
   } catch (error) {
     console.error('Error fetching tax settings:', error);
@@ -4244,11 +4246,13 @@ app.get('/api/tax-settings', auth, async (req, res) => {
   }
 });
 
-// Get tax settings for customer menu (public)
+// Get tax settings for customer menu (public; optional cafeSlug)
 app.get('/api/tax-settings/menu', async (req, res) => {
   try {
-    const taxSettings = await TaxSettings.getCurrent();
-    // Return both show_tax_in_menu flag and tax_rate for customer menu
+    const cafeSlug = req.query.cafeSlug || 'default';
+    const cafe = await Cafe.getBySlug(cafeSlug);
+    const cafeId = cafe ? cafe.id : null;
+    const taxSettings = await TaxSettings.getCurrent(cafeId);
     res.json({
       show_tax_in_menu: taxSettings.show_tax_in_menu,
       tax_rate: taxSettings.tax_rate
@@ -4446,11 +4450,12 @@ app.get('/api/menu/branding', async (req, res) => {
   }
 });
 
-// Update tax settings
-app.put('/api/tax-settings', auth, adminAuth, async (req, res) => {
+// Update tax settings (cafe-scoped)
+app.put('/api/tax-settings', auth, adminAuth, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const { tax_rate, tax_name, show_tax_in_menu, include_tax } = req.body;
-    
+
     if (tax_rate === undefined || !tax_name) {
       return res.status(400).json({ error: 'Tax rate and tax name are required' });
     }
@@ -4460,7 +4465,7 @@ app.put('/api/tax-settings', auth, adminAuth, async (req, res) => {
       tax_name: tax_name.trim(),
       show_tax_in_menu: show_tax_in_menu !== undefined ? show_tax_in_menu : true,
       include_tax: include_tax !== undefined ? include_tax : true
-    });
+    }, cafeId);
 
     res.json(updatedSettings);
   } catch (error) {
@@ -4469,10 +4474,11 @@ app.put('/api/tax-settings', auth, adminAuth, async (req, res) => {
   }
 });
 
-// Get tax history
-app.get('/api/tax-settings/history', auth, adminAuth, async (req, res) => {
+// Get tax history (cafe-scoped)
+app.get('/api/tax-settings/history', auth, adminAuth, requireOrderCafeScope, async (req, res) => {
   try {
-    const history = await TaxSettings.getHistory();
+    const cafeId = getOrderCafeId(req);
+    const history = await TaxSettings.getHistory(cafeId);
     res.json(history);
   } catch (error) {
     console.error('Error fetching tax history:', error);
@@ -4480,16 +4486,17 @@ app.get('/api/tax-settings/history', auth, adminAuth, async (req, res) => {
   }
 });
 
-// Calculate tax for a given subtotal
-app.post('/api/calculate-tax', async (req, res) => {
+// Calculate tax for a given subtotal (cafe-scoped when authenticated)
+app.post('/api/calculate-tax', auth, async (req, res) => {
   try {
     const { subtotal } = req.body;
-    
+
     if (subtotal === undefined) {
       return res.status(400).json({ error: 'Subtotal is required' });
     }
 
-    const taxCalculation = await TaxSettings.calculateTax(parseFloat(subtotal));
+    const cafeId = getOrderCafeId(req);
+    const taxCalculation = await TaxSettings.calculateTax(parseFloat(subtotal), cafeId);
     res.json(taxCalculation);
   } catch (error) {
     console.error('Error calculating tax:', error);
@@ -4497,10 +4504,25 @@ app.post('/api/calculate-tax', async (req, res) => {
   }
 });
 
-// Get current currency settings
+// Get current currency settings (cafe from auth or optional cafeSlug for public)
 app.get('/api/currency-settings', async (req, res) => {
   try {
-    const currencySettings = await CurrencySettings.getCurrent();
+    let cafeId = null;
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    if (token) {
+      try {
+        const jwt = require('jsonwebtoken');
+        const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+        const decoded = jwt.verify(token, JWT_SECRET, { clockTolerance: 600 });
+        const user = await User.findById(decoded.userId);
+        if (user && user.cafe_id) cafeId = user.cafe_id;
+      } catch (e) { /* ignore */ }
+    }
+    if (cafeId == null && req.query.cafeSlug) {
+      const cafe = await Cafe.getBySlug(req.query.cafeSlug);
+      if (cafe) cafeId = cafe.id;
+    }
+    const currencySettings = await CurrencySettings.getCurrent(cafeId);
     res.json(currencySettings);
   } catch (error) {
     console.error('Error fetching currency settings:', error);
@@ -4508,11 +4530,12 @@ app.get('/api/currency-settings', async (req, res) => {
   }
 });
 
-// Update currency settings
-app.put('/api/currency-settings', async (req, res) => {
+// Update currency settings (cafe-scoped)
+app.put('/api/currency-settings', auth, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const { currency_code, currency_symbol, currency_name } = req.body;
-    
+
     if (!currency_code || !currency_symbol || !currency_name) {
       return res.status(400).json({ error: 'Currency code, symbol, and name are required' });
     }
@@ -4521,7 +4544,7 @@ app.put('/api/currency-settings', async (req, res) => {
       currency_code: currency_code.trim(),
       currency_symbol: currency_symbol.trim(),
       currency_name: currency_name.trim()
-    });
+    }, cafeId);
 
     res.json(updatedSettings);
   } catch (error) {
@@ -4530,10 +4553,11 @@ app.put('/api/currency-settings', async (req, res) => {
   }
 });
 
-// Get currency history
-app.get('/api/currency-settings/history', async (req, res) => {
+// Get currency history (cafe-scoped)
+app.get('/api/currency-settings/history', auth, requireOrderCafeScope, async (req, res) => {
   try {
-    const history = await CurrencySettings.getHistory();
+    const cafeId = getOrderCafeId(req);
+    const history = await CurrencySettings.getHistory(cafeId);
     res.json(history);
   } catch (error) {
     console.error('Error fetching currency history:', error);
@@ -5258,10 +5282,11 @@ app.delete('/api/menu/:id/image', auth, requireCafeMembership, async (req, res) 
   }
 });
 
-// Get all invoices
-app.get('/api/invoices', async (req, res) => {
+// Get all invoices (multi-cafe: scoped by cafe_id)
+app.get('/api/invoices', auth, requireOrderCafeScope, async (req, res) => {
   try {
-    const invoices = await Invoice.getAll();
+    const cafeId = getOrderCafeId(req);
+    const invoices = await Invoice.getAll(cafeId);
     res.json(invoices);
   } catch (error) {
     console.error('Error fetching invoices:', error);
@@ -5278,13 +5303,18 @@ app.post('/api/invoices', auth, async (req, res) => {
       return res.status(400).json({ error: 'Customer name and items are required' });
     }
 
+    const cafeId = getOrderCafeId(req);
+    if (!cafeId) {
+      return res.status(400).json({ error: 'Unable to determine cafe. Please ensure you are logged in and belong to a cafe.' });
+    }
+
     const invoiceNumber = await Invoice.getNextInvoiceNumber();
 
     // Calculate subtotal
     const subtotal = items.reduce((sum, item) => sum + (parseFloat(item.price) * item.quantity), 0);
-    
-    // Calculate tax
-    const taxCalculation = await TaxSettings.calculateTax(subtotal);
+
+    // Calculate tax (cafe-scoped)
+    const taxCalculation = await TaxSettings.calculateTax(subtotal, cafeId);
     
     // Calculate total
     const tipAmountNum = parseFloat(tipAmount) || 0;
@@ -5312,23 +5342,6 @@ app.post('/api/invoices', auth, async (req, res) => {
       }
     }
 
-    // Get cafe_id from authenticated user
-    let cafeId = null;
-    if (req.user) {
-      // Check if impersonating
-      if (req.impersonation && req.impersonation.isImpersonating) {
-        cafeId = req.impersonation.cafeId;
-      } else if (req.user.cafe_id) {
-        cafeId = req.user.cafe_id;
-      }
-    }
-    
-    if (!cafeId) {
-      return res.status(400).json({ 
-        error: 'Unable to determine cafe. Please ensure you are logged in and belong to a cafe.' 
-      });
-    }
-
     // Check if customer exists or create new one (scoped to this cafe)
     let customer = null;
     if (customerPhone || customerName) {
@@ -5348,8 +5361,9 @@ app.post('/api/invoices', auth, async (req, res) => {
       }
     }
 
-    // First create an order
+    // First create an order (include cafe_id for multi-cafe)
     const orderData = {
+      cafe_id: cafeId,
       customer_name: customerName,
       customer_email: customerEmail || null,
       customer_phone: customerPhone,
@@ -5441,11 +5455,12 @@ app.post('/api/invoices', auth, async (req, res) => {
 });
 
 // Generate PDF for invoice
-app.get('/api/invoices/:invoiceNumber/pdf', async (req, res) => {
+app.get('/api/invoices/:invoiceNumber/pdf', auth, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const { invoiceNumber } = req.params;
     
-    const invoice = await Invoice.getByNumber(invoiceNumber);
+    const invoice = await Invoice.getByNumber(invoiceNumber, cafeId);
     if (!invoice) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
@@ -5468,11 +5483,12 @@ app.get('/api/invoices/:invoiceNumber/pdf', async (req, res) => {
 });
 
 // Download invoice (legacy endpoint)
-app.get('/api/invoices/:invoiceNumber/download', async (req, res) => {
+app.get('/api/invoices/:invoiceNumber/download', auth, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const { invoiceNumber } = req.params;
     
-    const invoice = await Invoice.getByNumber(invoiceNumber);
+    const invoice = await Invoice.getByNumber(invoiceNumber, cafeId);
     if (!invoice) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
@@ -5491,11 +5507,12 @@ app.get('/api/invoices/:invoiceNumber/download', async (req, res) => {
 });
 
 // Get invoice by order number
-app.get('/api/invoices/order/:orderNumber', async (req, res) => {
+app.get('/api/invoices/order/:orderNumber', auth, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const { orderNumber } = req.params;
     
-    const invoice = await Invoice.getByOrderNumber(orderNumber);
+    const invoice = await Invoice.getByOrderNumber(orderNumber, cafeId);
     if (!invoice) {
       return res.status(404).json({ error: 'Invoice not found for this order' });
     }
@@ -5507,10 +5524,11 @@ app.get('/api/invoices/order/:orderNumber', async (req, res) => {
   }
 });
 
-// Get invoice statistics
-app.get('/api/statistics', async (req, res) => {
+// Get invoice statistics (multi-cafe: scoped by cafe_id)
+app.get('/api/statistics', auth, requireOrderCafeScope, async (req, res) => {
   try {
-    const statistics = await Invoice.getStatistics();
+    const cafeId = getOrderCafeId(req);
+    const statistics = await Invoice.getStatistics(cafeId);
     res.json(statistics);
   } catch (error) {
     console.error('Error fetching statistics:', error);
@@ -6073,20 +6091,49 @@ function isInvalidCustomerPhone(value) {
   return isMalformedString(value) || String(value).trim() === '';
 }
 
-// Order endpoints
+// Order endpoints (multi-cafe: scoped by cafe_id from user/impersonation)
+
+function getOrderCafeId(req) {
+  let cafeId = null;
+  if (req.user) {
+    if (req.impersonation && req.impersonation.isImpersonating) {
+      cafeId = req.impersonation.cafeId;
+    } else if (req.user.cafe_id) {
+      cafeId = req.user.cafe_id;
+    }
+  }
+  if (req.user && req.user.role === 'superadmin' && req.query.cafeId != null && req.query.cafeId !== '') {
+    const parsed = parseInt(req.query.cafeId, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      cafeId = parsed;
+    }
+  }
+  return cafeId;
+}
+
+function requireOrderCafeScope(req, res, next) {
+  const cafeId = getOrderCafeId(req);
+  if (cafeId != null) return next();
+  if (req.user && req.user.role === 'superadmin') return next();
+  return res.status(403).json({
+    error: 'You must be assigned to a cafe to access orders.',
+    code: 'CAFE_SCOPE_REQUIRED'
+  });
+}
+
 // Get all orders (admin only)
-app.get('/api/orders', auth, requireActiveSubscription, async (req, res) => {
+app.get('/api/orders', auth, requireActiveSubscription, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const { customer_phone, order_number } = req.query;
 
     let orders;
     if (customer_phone && !isInvalidCustomerPhone(customer_phone)) {
-      orders = await Order.getByCustomerPhone(customer_phone);
+      orders = await Order.getByCustomerPhone(customer_phone, cafeId);
     } else if (order_number && !isMalformedString(order_number)) {
-      orders = await Order.getByOrderNumber(order_number);
+      orders = await Order.getByOrderNumber(order_number, cafeId);
     } else {
-      // Get all orders
-      orders = await Order.getAll();
+      orders = await Order.getAll(cafeId);
     }
     
     res.json(orders);
@@ -6096,16 +6143,21 @@ app.get('/api/orders', auth, requireActiveSubscription, async (req, res) => {
   }
 });
 
-// Get customer orders (public endpoint)
+// Get customer orders (public endpoint; scope by cafeSlug for multi-cafe)
 app.get('/api/customer/orders', async (req, res) => {
   try {
-    const { customer_phone } = req.query;
+    const { customer_phone, cafeSlug } = req.query;
 
     if (isInvalidCustomerPhone(customer_phone)) {
       return res.status(400).json({ error: 'Customer phone number is required' });
     }
 
-    const orders = await Order.getByCustomerPhone(customer_phone);
+    let cafeId = null;
+    if (cafeSlug && !isMalformedString(cafeSlug)) {
+      const cafe = await Cafe.getBySlug(cafeSlug);
+      if (cafe) cafeId = cafe.id;
+    }
+    const orders = await Order.getByCustomerPhone(customer_phone, cafeId);
     res.json(orders);
   } catch (error) {
     console.error('Error fetching customer orders:', error);
@@ -6134,11 +6186,9 @@ app.post('/api/customer/orders', async (req, res) => {
     const subtotal = items.reduce((sum, item) => sum + (parseFloat(item.price) * item.quantity), 0);
     const cafeSlug = req.query.cafeSlug || req.body.cafeSlug || 'default';
 
-    // Fetch tax and cafe in parallel to reduce response time
-    const [taxCalculation, cafe] = await Promise.all([
-      TaxSettings.calculateTax(subtotal),
-      Cafe.getBySlug(cafeSlug)
-    ]);
+    const cafe = await Cafe.getBySlug(cafeSlug);
+    const cafeIdForTax = cafe ? cafe.id : null;
+    const taxCalculation = await TaxSettings.calculateTax(subtotal, cafeIdForTax);
 
     const cafeId = cafe ? cafe.id : null;
     if (!cafeId) {
@@ -6231,8 +6281,9 @@ app.post('/api/customer/orders', async (req, res) => {
 });
 
 // Update order status
-app.patch('/api/orders/:id/status', auth, async (req, res) => {
+app.patch('/api/orders/:id/status', auth, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const { id } = req.params;
     const { status } = req.body;
     
@@ -6245,13 +6296,12 @@ app.patch('/api/orders/:id/status', auth, async (req, res) => {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
-    // Get the current order to check if points were already awarded
-    const currentOrder = await Order.getById(id);
+    const currentOrder = await Order.getById(id, cafeId);
     if (!currentOrder) {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    const updatedOrder = await Order.updateStatus(id, status);
+    const updatedOrder = await Order.updateStatus(id, status, cafeId);
     
     // Broadcast order update via WebSocket
     if (global.wsManager) {
@@ -6262,14 +6312,9 @@ app.patch('/api/orders/:id/status', auth, async (req, res) => {
     let loyaltyUpdate = null;
     if (status === 'completed' && currentOrder.status !== 'completed' && updatedOrder.customer_id && !currentOrder.points_awarded) {
       try {
-        // Calculate points earned (1 point per 10 INR spent)
         const pointsEarned = Math.floor(updatedOrder.final_amount / 10);
-        
-        // Update customer loyalty data - pass pointsEarned as pointsChange to override automatic calculation
-        const updatedCustomer = await Customer.updateLoyaltyData(updatedOrder.customer_id, updatedOrder.final_amount, pointsEarned);
-        
-        // Mark points as awarded in the order
-        await Order.markPointsAwarded(id);
+        const updatedCustomer = await Customer.updateLoyaltyData(updatedOrder.customer_id, updatedOrder.final_amount, pointsEarned, cafeId);
+        await Order.markPointsAwarded(id, cafeId);
         
         loyaltyUpdate = {
           pointsEarned,
@@ -6297,8 +6342,9 @@ app.patch('/api/orders/:id/status', auth, async (req, res) => {
 });
 
 // Update order details
-app.put('/api/orders/:id', auth, async (req, res) => {
+app.put('/api/orders/:id', auth, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const { id } = req.params;
     const orderData = req.body;
     
@@ -6306,7 +6352,7 @@ app.put('/api/orders/:id', auth, async (req, res) => {
       return res.status(400).json({ error: 'Order data is required' });
     }
 
-    const updatedOrder = await Order.update(id, orderData);
+    const updatedOrder = await Order.update(id, orderData, cafeId);
     
     // Broadcast order update via WebSocket
     if (global.wsManager) {
@@ -6321,9 +6367,13 @@ app.put('/api/orders/:id', auth, async (req, res) => {
 });
 
 // Create new order
-app.post('/api/orders', auth, requireActiveSubscription, async (req, res) => {
+app.post('/api/orders', auth, requireActiveSubscription, requireOrderCafeScope, async (req, res) => {
   try {
-    const orderData = req.body;
+    const cafeId = getOrderCafeId(req);
+    if (!cafeId) {
+      return res.status(400).json({ error: 'Unable to determine cafe. Please ensure you are logged in and belong to a cafe.' });
+    }
+    const orderData = { ...req.body, cafe_id: cafeId };
     
     if (!orderData.items || orderData.items.length === 0) {
       return res.status(400).json({ error: 'Order must contain at least one item' });
@@ -6344,20 +6394,23 @@ app.post('/api/orders', auth, requireActiveSubscription, async (req, res) => {
 });
 
 // Create test order (for debugging)
-app.post('/api/orders/test', auth, async (req, res) => {
+app.post('/api/orders/test', auth, requireOrderCafeScope, async (req, res) => {
   try {
-    // First, let's get available menu items
-    const menuItems = await MenuItem.getAll();
+    const cafeId = getOrderCafeId(req);
+    if (!cafeId) {
+      return res.status(400).json({ error: 'Unable to determine cafe. Please ensure you are logged in and belong to a cafe.' });
+    }
+    const menuItems = await MenuItem.getAll(cafeId);
     
     if (menuItems.length === 0) {
       return res.status(400).json({ error: 'No menu items available. Please add menu items first.' });
     }
     
-    // Use the first available menu item
     const firstItem = menuItems[0];
-    const secondItem = menuItems[1] || firstItem; // Use first item twice if only one exists
+    const secondItem = menuItems[1] || firstItem;
     
     const testOrder = {
+      cafe_id: cafeId,
       customer_name: 'Test Customer',
       customer_email: 'test@example.com',
       customer_phone: '+91 98765 43210',
@@ -6378,7 +6431,7 @@ app.post('/api/orders/test', auth, async (req, res) => {
         }
       ],
       total_amount: (firstItem.price * 2) + secondItem.price,
-      tax_amount: ((firstItem.price * 2) + secondItem.price) * 0.085, // 8.5% tax
+      tax_amount: ((firstItem.price * 2) + secondItem.price) * 0.085,
       tip_amount: 20.00,
       final_amount: ((firstItem.price * 2) + secondItem.price) * 1.085 + 20.00,
       payment_method: 'cash',
@@ -6400,10 +6453,11 @@ app.post('/api/orders/test', auth, async (req, res) => {
 });
 
 // Print order for thermal printer
-app.post('/api/orders/:id/print', auth, async (req, res) => {
+app.post('/api/orders/:id/print', auth, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const { id } = req.params;
-    const order = await Order.getById(id);
+    const order = await Order.getById(id, cafeId);
     
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
@@ -6477,14 +6531,15 @@ app.get('/api/customers', auth, async (req, res) => {
   }
 });
 
-// Get customer by ID
-app.get('/api/customers/:id', auth, async (req, res) => {
+// Get customer by ID (multi-cafe: scoped by cafe_id)
+app.get('/api/customers/:id', auth, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const customerId = parsePositiveId(req.params.id);
     if (!customerId) {
       return res.status(400).json({ error: 'Invalid customer ID' });
     }
-    const customer = await Customer.getById(customerId);
+    const customer = await Customer.getById(customerId, cafeId);
 
     if (!customer) {
       return res.status(404).json({ error: 'Customer not found' });
@@ -6610,10 +6665,10 @@ app.post('/api/customer/register', async (req, res) => {
   }
 });
 
-// Update customer profile (public endpoint - customers can update their own details)
+// Update customer profile (public endpoint - customers can update their own details; scope by cafeSlug for multi-cafe)
 app.put('/api/customer/profile', async (req, res) => {
   try {
-    const { id, name, email, address, date_of_birth } = req.body;
+    const { id, name, email, address, date_of_birth, cafeSlug } = req.body;
 
     const customerId = parsePositiveId(id);
     if (!customerId) {
@@ -6625,8 +6680,16 @@ app.put('/api/customer/profile', async (req, res) => {
       return res.status(400).json({ error: nameErr });
     }
 
-    // Verify customer exists
-    const existingCustomer = await Customer.getById(customerId);
+    let cafeId = null;
+    const slug = sanitizeString(cafeSlug || req.query.cafeSlug) || 'default';
+    try {
+      const cafe = await Cafe.getBySlug(slug);
+      if (cafe) cafeId = cafe.id;
+    } catch (e) {
+      // ignore
+    }
+
+    const existingCustomer = await Customer.getById(customerId, cafeId);
     if (!existingCustomer) {
       return res.status(404).json({ error: 'Customer not found' });
     }
@@ -6638,7 +6701,7 @@ app.put('/api/customer/profile', async (req, res) => {
       date_of_birth: date_of_birth && !isMalformedString(date_of_birth) ? String(date_of_birth).trim() : null
     };
 
-    const customer = await Customer.update(customerId, customerData);
+    const customer = await Customer.update(customerId, customerData, cafeId);
     
     // Return sanitized customer data (without phone in response for security)
     const sanitizedCustomer = {
@@ -6738,9 +6801,10 @@ app.post('/api/customers', auth, async (req, res) => {
   }
 });
 
-// Update customer
-app.put('/api/customers/:id', auth, async (req, res) => {
+// Update customer (multi-cafe: scoped by cafe_id)
+app.put('/api/customers/:id', auth, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const customerId = parsePositiveId(req.params.id);
     if (!customerId) {
       return res.status(400).json({ error: 'Invalid customer ID' });
@@ -6762,22 +6826,26 @@ app.put('/api/customers/:id', auth, async (req, res) => {
       is_active: is_active !== undefined ? is_active : true
     };
 
-    const customer = await Customer.update(customerId, customerData);
+    const customer = await Customer.update(customerId, customerData, cafeId);
     res.json(customer);
   } catch (error) {
+    if (error.message === 'Customer not found') {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
     console.error('Error updating customer:', error);
     res.status(500).json({ error: 'Failed to update customer' });
   }
 });
 
-// Get customer order history
-app.get('/api/customers/:id/orders', auth, async (req, res) => {
+// Get customer order history (multi-cafe: scoped by cafe_id)
+app.get('/api/customers/:id/orders', auth, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const customerId = parsePositiveId(req.params.id);
     if (!customerId) {
       return res.status(400).json({ error: 'Invalid customer ID' });
     }
-    const orders = await Customer.getOrderHistory(customerId);
+    const orders = await Customer.getOrderHistory(customerId, cafeId);
     res.json(orders);
   } catch (error) {
     console.error('Error fetching customer orders:', error);
@@ -6786,9 +6854,10 @@ app.get('/api/customers/:id/orders', auth, async (req, res) => {
 });
 
 
-// Redeem loyalty points
-app.post('/api/customers/:id/redeem-points', auth, async (req, res) => {
+// Redeem loyalty points (multi-cafe: scoped by cafe_id)
+app.post('/api/customers/:id/redeem-points', auth, requireOrderCafeScope, async (req, res) => {
   try {
+    const cafeId = getOrderCafeId(req);
     const customerId = parsePositiveId(req.params.id);
     if (!customerId) {
       return res.status(400).json({ error: 'Invalid customer ID' });
@@ -6799,9 +6868,12 @@ app.post('/api/customers/:id/redeem-points', auth, async (req, res) => {
       return res.status(400).json({ error: 'Valid points amount is required' });
     }
 
-    const customer = await Customer.redeemPoints(customerId, points);
+    const customer = await Customer.redeemPoints(customerId, points, cafeId);
     res.json(customer);
   } catch (error) {
+    if (error.message === 'Customer not found' || error.message === 'Insufficient loyalty points') {
+      return res.status(400).json({ error: error.message });
+    }
     console.error('Error redeeming points:', error);
     res.status(500).json({ error: 'Failed to redeem points' });
   }

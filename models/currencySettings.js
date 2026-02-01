@@ -1,11 +1,17 @@
 const { pool } = require('../config/database');
 
 class CurrencySettings {
-  static async getCurrent() {
+  // Optional cafeId for multi-cafe; when provided, scope by cafe_id.
+  static async getCurrent(cafeId = null) {
     try {
-      const [rows] = await pool.execute(
-        'SELECT * FROM currency_settings WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1'
-      );
+      let sql = 'SELECT * FROM currency_settings WHERE is_active = TRUE';
+      const params = [];
+      if (cafeId != null) {
+        sql += ' AND cafe_id = ?';
+        params.push(cafeId);
+      }
+      sql += ' ORDER BY created_at DESC LIMIT 1';
+      const [rows] = await pool.execute(sql, params);
       return rows[0] || { currency_code: 'INR', currency_symbol: '₹', currency_name: 'Indian Rupee' };
     } catch (error) {
       console.error('Error getting current currency settings:', error);
@@ -13,17 +19,23 @@ class CurrencySettings {
     }
   }
 
-  static async update(settings) {
+  // Optional cafeId; when provided, only deactivate/insert for that cafe.
+  static async update(settings, cafeId = null) {
     try {
-      // Deactivate all current settings
+      if (cafeId != null) {
+        await pool.execute('UPDATE currency_settings SET is_active = FALSE WHERE cafe_id = ?', [cafeId]);
+        const [result] = await pool.execute(
+          'INSERT INTO currency_settings (cafe_id, currency_code, currency_symbol, currency_name, is_active) VALUES (?, ?, ?, ?, TRUE)',
+          [cafeId, settings.currency_code, settings.currency_symbol, settings.currency_name]
+        );
+        return { id: result.insertId, ...settings, is_active: true };
+      }
+
       await pool.execute('UPDATE currency_settings SET is_active = FALSE');
-      
-      // Insert new active setting
       const [result] = await pool.execute(
         'INSERT INTO currency_settings (currency_code, currency_symbol, currency_name, is_active) VALUES (?, ?, ?, TRUE)',
         [settings.currency_code, settings.currency_symbol, settings.currency_name]
       );
-      
       return { id: result.insertId, ...settings, is_active: true };
     } catch (error) {
       console.error('Error updating currency settings:', error);
@@ -31,11 +43,17 @@ class CurrencySettings {
     }
   }
 
-  static async getHistory() {
+  // Optional cafeId; when provided, filter by cafe_id.
+  static async getHistory(cafeId = null) {
     try {
-      const [rows] = await pool.execute(
-        'SELECT * FROM currency_settings ORDER BY created_at DESC'
-      );
+      let sql = 'SELECT * FROM currency_settings';
+      const params = [];
+      if (cafeId != null) {
+        sql += ' WHERE cafe_id = ?';
+        params.push(cafeId);
+      }
+      sql += ' ORDER BY created_at DESC';
+      const [rows] = await pool.execute(sql, params);
       return rows;
     } catch (error) {
       console.error('Error getting currency history:', error);

@@ -49,18 +49,20 @@ class Customer {
     }
   }
 
-  // Get customer by ID
-  static async getById(id) {
+  // Get customer by ID (optionally scoped by cafeId for multi-cafe)
+  static async getById(id, cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
-        SELECT 
+      const hasCafeId = cafeId != null;
+      const [rows] = await pool.execute(
+        `SELECT 
           id, name, email, phone, address, date_of_birth,
           loyalty_points, total_spent, visit_count,
           first_visit_date, last_visit_date, is_active, notes,
           created_at, updated_at
         FROM customers
-        WHERE id = ?
-      `, [id]);
+        WHERE id = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+        hasCafeId ? [id, cafeId] : [id]
+      );
 
       if (rows.length === 0) {
         return null;
@@ -173,75 +175,78 @@ class Customer {
 
       const [result] = await pool.execute(query, params);
 
-      return await this.getById(result.insertId);
+      return await this.getById(result.insertId, cafe_id || null);
     } catch (error) {
       throw new Error(`Error creating customer: ${error.message}`);
     }
   }
 
-  // Update customer
-  static async update(id, customerData) {
+  // Update customer (optionally scoped by cafeId for multi-cafe)
+  static async update(id, customerData, cafeId = null) {
     try {
       const {
         name, email, phone, address, date_of_birth, notes, is_active
       } = customerData;
 
-      const [result] = await pool.execute(`
-        UPDATE customers 
+      const hasCafeId = cafeId != null;
+      const [result] = await pool.execute(
+        `UPDATE customers 
         SET name = ?, email = ?, phone = ?, address = ?, 
             date_of_birth = ?, notes = ?, is_active = ?,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `, [name, email, phone, address, date_of_birth, notes, is_active, id]);
+        WHERE id = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+        hasCafeId ? [name, email, phone, address, date_of_birth, notes, is_active, id, cafeId] : [name, email, phone, address, date_of_birth, notes, is_active, id]
+      );
 
       if (result.affectedRows === 0) {
         throw new Error('Customer not found');
       }
 
-      return await this.getById(id);
+      return await this.getById(id, cafeId);
     } catch (error) {
       throw new Error(`Error updating customer: ${error.message}`);
     }
   }
 
-  // Update customer loyalty points and visit data
-  static async updateLoyaltyData(id, orderAmount, pointsChange = null) {
+  // Update customer loyalty points and visit data (optionally scoped by cafeId for multi-cafe)
+  static async updateLoyaltyData(id, orderAmount, pointsChange = null, cafeId = null) {
     try {
       let pointsToAdd;
       
       if (pointsChange !== null) {
-        // Use provided points change (for redemption scenarios)
         pointsToAdd = pointsChange;
       } else {
-        // Calculate loyalty points (1 point per 10 rupees spent)
         pointsToAdd = Math.floor(orderAmount / 10);
       }
       
-      const [result] = await pool.execute(`
-        UPDATE customers 
+      const hasCafeId = cafeId != null;
+      const [result] = await pool.execute(
+        `UPDATE customers 
         SET loyalty_points = loyalty_points + ?,
             total_spent = total_spent + ?,
             visit_count = visit_count + 1,
             last_visit_date = CURRENT_TIMESTAMP,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `, [pointsToAdd, orderAmount, id]);
+        WHERE id = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+        hasCafeId ? [pointsToAdd, orderAmount, id, cafeId] : [pointsToAdd, orderAmount, id]
+      );
 
       if (result.affectedRows === 0) {
         throw new Error('Customer not found');
       }
 
-      return await this.getById(id);
+      return await this.getById(id, cafeId);
     } catch (error) {
       throw new Error(`Error updating customer loyalty data: ${error.message}`);
     }
   }
 
-  // Get customer order history
-  static async getOrderHistory(customerId) {
+  // Get customer order history (optionally scoped by cafeId for multi-cafe)
+  static async getOrderHistory(customerId, cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
-        SELECT 
+      const hasCafeId = cafeId != null;
+      const [rows] = await pool.execute(
+        `SELECT 
           o.id, o.order_number, o.total_amount, o.final_amount,
           o.status, o.payment_method, o.created_at,
           oi.quantity, oi.unit_price, oi.total_price,
@@ -249,9 +254,10 @@ class Customer {
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
-        WHERE o.customer_id = ?
-        ORDER BY o.created_at DESC
-      `, [customerId]);
+        WHERE o.customer_id = ? ${hasCafeId ? 'AND o.cafe_id = ?' : ''}
+        ORDER BY o.created_at DESC`,
+        hasCafeId ? [customerId, cafeId] : [customerId]
+      );
 
       // Group orders with their items
       const orderMap = new Map();
@@ -428,10 +434,10 @@ class Customer {
     }
   }
 
-  // Redeem loyalty points
-  static async redeemPoints(customerId, pointsToRedeem) {
+  // Redeem loyalty points (optionally scoped by cafeId for multi-cafe)
+  static async redeemPoints(customerId, pointsToRedeem, cafeId = null) {
     try {
-      const customer = await this.getById(customerId);
+      const customer = await this.getById(customerId, cafeId);
       if (!customer) {
         throw new Error('Customer not found');
       }
@@ -440,18 +446,20 @@ class Customer {
         throw new Error('Insufficient loyalty points');
       }
 
-      const [result] = await pool.execute(`
-        UPDATE customers 
+      const hasCafeId = cafeId != null;
+      const [result] = await pool.execute(
+        `UPDATE customers 
         SET loyalty_points = loyalty_points - ?,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `, [pointsToRedeem, customerId]);
+        WHERE id = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+        hasCafeId ? [pointsToRedeem, customerId, cafeId] : [pointsToRedeem, customerId]
+      );
 
       if (result.affectedRows === 0) {
         throw new Error('Failed to redeem points');
       }
 
-      return await this.getById(customerId);
+      return await this.getById(customerId, cafeId);
     } catch (error) {
       throw new Error(`Error redeeming loyalty points: ${error.message}`);
     }

@@ -135,10 +135,9 @@ class Invoice {
     }
   }
 
-  // Get invoice by number
-  static async getByNumber(invoiceNumber) {
+  // Get invoice by number (optionally scoped by cafeId for multi-cafe)
+  static async getByNumber(invoiceNumber, cafeId = null) {
     try {
-      // Check which columns exist
       const [columns] = await pool.execute(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
@@ -148,6 +147,7 @@ class Invoice {
       
       const existingColumns = columns.map(col => col.COLUMN_NAME);
       const hasOrderId = existingColumns.includes('order_id');
+      const hasCafeId = existingColumns.includes('cafe_id');
       const hasSubtotal = existingColumns.includes('subtotal');
       const hasTaxAmount = existingColumns.includes('tax_amount');
       const hasTipAmount = existingColumns.includes('tip_amount');
@@ -212,8 +212,13 @@ class Invoice {
       }
       
       query += ' WHERE i.invoice_number = ?';
+      const params = [invoiceNumber];
+      if (hasCafeId && cafeId != null) {
+        query += ' AND i.cafe_id = ?';
+        params.push(cafeId);
+      }
 
-      const [invoices] = await pool.execute(query, [invoiceNumber]);
+      const [invoices] = await pool.execute(query, params);
 
       if (invoices.length === 0) {
         return null;
@@ -250,10 +255,9 @@ class Invoice {
     }
   }
 
-  // Get invoice by order number
-  static async getByOrderNumber(orderNumber) {
+  // Get invoice by order number (optionally scoped by cafeId for multi-cafe)
+  static async getByOrderNumber(orderNumber, cafeId = null) {
     try {
-      // Check if order_id column exists
       const [columns] = await pool.execute(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
@@ -263,11 +267,9 @@ class Invoice {
       `);
       
       if (columns.length === 0) {
-        // order_id doesn't exist, can't query by order number
         return null;
       }
 
-      // Check which columns exist
       const [allColumns] = await pool.execute(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
@@ -276,6 +278,7 @@ class Invoice {
       `);
       
       const existingColumns = allColumns.map(col => col.COLUMN_NAME);
+      const hasCafeId = existingColumns.includes('cafe_id');
       const hasSubtotal = existingColumns.includes('subtotal');
       const hasTaxAmount = existingColumns.includes('tax_amount');
       const hasTipAmount = existingColumns.includes('tip_amount');
@@ -321,12 +324,19 @@ class Invoice {
       
       selectFields.push('i.created_at', 'o.order_number');
 
-      const [invoices] = await pool.execute(`
+      let query = `
         SELECT ${selectFields.join(', ')}
         FROM invoices i
         LEFT JOIN orders o ON i.order_id = o.id
         WHERE o.order_number = ?
-      `, [orderNumber]);
+      `;
+      const params = [orderNumber];
+      if (hasCafeId && cafeId != null) {
+        query += ' AND i.cafe_id = ?';
+        params.push(cafeId);
+      }
+
+      const [invoices] = await pool.execute(query, params);
 
       if (invoices.length === 0) {
         return null;
@@ -514,10 +524,9 @@ class Invoice {
     }
   }
 
-  // Get invoice statistics
-  static async getStatistics() {
+  // Get invoice statistics (optionally scoped by cafeId for multi-cafe)
+  static async getStatistics(cafeId = null) {
     try {
-      // Check which columns exist
       const [columns] = await pool.execute(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
@@ -526,12 +535,15 @@ class Invoice {
       `);
       
       const existingColumns = columns.map(col => col.COLUMN_NAME);
+      const hasCafeId = existingColumns.includes('cafe_id');
       const hasTotalAmount = existingColumns.includes('total_amount');
       const hasTotal = existingColumns.includes('total');
       const hasTipAmount = existingColumns.includes('tip_amount');
       const hasTaxAmount = existingColumns.includes('tax_amount');
 
-      // Build revenue query based on available columns
+      const whereClause = (hasCafeId && cafeId != null) ? ' WHERE cafe_id = ?' : '';
+      const params = (hasCafeId && cafeId != null) ? [cafeId] : [];
+
       let revenueColumn = '0';
       if (hasTotalAmount) {
         revenueColumn = 'SUM(total_amount)';
@@ -539,42 +551,40 @@ class Invoice {
         revenueColumn = 'SUM(total)';
       }
 
-      const [totalRevenue] = await pool.execute(`
-        SELECT ${revenueColumn} as totalRevenue
-        FROM invoices
-      `);
+      const [totalRevenue] = await pool.execute(
+        `SELECT ${revenueColumn} as totalRevenue FROM invoices${whereClause}`,
+        params
+      );
 
-      const [totalOrders] = await pool.execute(`
-        SELECT COUNT(*) as totalOrders
-        FROM invoices
-      `);
+      const [totalOrders] = await pool.execute(
+        `SELECT COUNT(*) as totalOrders FROM invoices${whereClause}`,
+        params
+      );
 
-      const [uniqueCustomers] = await pool.execute(`
-        SELECT COUNT(DISTINCT customer_name) as uniqueCustomers
-        FROM invoices
-      `);
+      const [uniqueCustomers] = await pool.execute(
+        `SELECT COUNT(DISTINCT customer_name) as uniqueCustomers FROM invoices${whereClause}`,
+        params
+      );
 
-      // Build tips query based on available columns
       let tipsColumn = '0';
       if (hasTipAmount) {
         tipsColumn = 'SUM(tip_amount)';
       }
 
-      const [totalTips] = await pool.execute(`
-        SELECT ${tipsColumn} as totalTips
-        FROM invoices
-      `);
+      const [totalTips] = await pool.execute(
+        `SELECT ${tipsColumn} as totalTips FROM invoices${whereClause}`,
+        params
+      );
 
-      // Build tax query based on available columns
       let taxColumn = '0';
       if (hasTaxAmount) {
         taxColumn = 'SUM(tax_amount)';
       }
 
-      const [totalTax] = await pool.execute(`
-        SELECT ${taxColumn} as totalTax
-        FROM invoices
-      `);
+      const [totalTax] = await pool.execute(
+        `SELECT ${taxColumn} as totalTax FROM invoices${whereClause}`,
+        params
+      );
 
       return {
         totalRevenue: parseFloat(totalRevenue[0].totalRevenue) || 0,

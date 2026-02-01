@@ -2,13 +2,12 @@ const { pool } = require('../config/database');
 const CafeDailyMetrics = require('./cafeDailyMetrics');
 
 class Order {
-  // Get all orders
-  static async getAll() {
+  // Get all orders (optionally scoped by cafeId for multi-cafe)
+  static async getAll(cafeId = null) {
     try {
-      const [orderCount] = await pool.execute('SELECT COUNT(*) as count FROM orders');
-      
-      const [rows] = await pool.execute(`
-        SELECT 
+      const hasCafeId = cafeId != null;
+      const [rows] = await pool.execute(
+        `SELECT 
           o.id,
           o.order_number,
           o.customer_id,
@@ -32,6 +31,7 @@ class Order {
           o.notes,
           o.created_at,
           o.updated_at,
+          o.cafe_id,
           JSON_ARRAYAGG(
             JSON_OBJECT(
               'id', oi.id,
@@ -45,9 +45,11 @@ class Order {
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
+        ${hasCafeId ? 'WHERE o.cafe_id = ?' : ''}
         GROUP BY o.id
-        ORDER BY o.created_at DESC
-      `);
+        ORDER BY o.created_at DESC`,
+        hasCafeId ? [cafeId] : []
+      );
       
       const result = rows.map(order => {
         let items = [];
@@ -94,17 +96,19 @@ class Order {
     }
   }
 
-  // Get order by ID
-  static async getById(id) {
+  // Get order by ID (optionally scoped by cafeId for multi-cafe)
+  static async getById(id, cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
-        SELECT 
+      const hasCafeId = cafeId != null;
+      const [rows] = await pool.execute(
+        `SELECT 
           o.id,
           o.order_number,
           o.customer_id,
           o.customer_name,
           o.customer_email,
           o.customer_phone,
+          o.table_number,
           o.total_amount,
           o.tax_amount,
           o.tip_amount,
@@ -121,6 +125,7 @@ class Order {
           o.notes,
           o.created_at,
           o.updated_at,
+          o.cafe_id,
           JSON_ARRAYAGG(
             JSON_OBJECT(
               'id', oi.id,
@@ -134,9 +139,10 @@ class Order {
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
-        WHERE o.id = ?
-        GROUP BY o.id
-      `, [id]);
+        WHERE o.id = ? ${hasCafeId ? 'AND o.cafe_id = ?' : ''}
+        GROUP BY o.id`,
+        hasCafeId ? [id, cafeId] : [id]
+      );
 
       if (rows.length === 0) {
         return null;
@@ -284,10 +290,10 @@ class Order {
 
       await connection.commit();
       
-      const result = await this.getById(orderId);
+      const result = await this.getById(orderId, cafeId);
       
       // Update analytics metrics (async, non-blocking)
-      if (hasCafeId && cafeId && result.created_at) {
+      if (hasCafeId && cafeId && result && result.created_at) {
         const orderDate = new Date(result.created_at).toISOString().split('T')[0];
         CafeDailyMetrics.incrementOrder(cafeId, orderDate, parseFloat(safeFinalAmount || 0), false)
           .catch(err => {
@@ -306,36 +312,40 @@ class Order {
     }
   }
 
-  // Update order status
-  static async updateStatus(id, status) {
+  // Update order status (optionally scoped by cafeId for multi-cafe)
+  static async updateStatus(id, status, cafeId = null) {
     try {
-      // Get order before update to check previous status
-      const orderBefore = await this.getById(id);
+      const hasCafeId = cafeId != null;
+      const orderBefore = await this.getById(id, cafeId);
+      if (!orderBefore) {
+        throw new Error('Order not found');
+      }
       const previousStatus = orderBefore.status;
-      const cafeId = orderBefore.cafe_id;
+      const orderCafeId = orderBefore.cafe_id || cafeId;
       const orderDate = orderBefore.created_at ? new Date(orderBefore.created_at).toISOString().split('T')[0] : null;
       const finalAmount = parseFloat(orderBefore.final_amount || 0);
 
-      const [result] = await pool.execute(`
-        UPDATE orders 
+      const [result] = await pool.execute(
+        `UPDATE orders 
         SET status = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `, [status, id]);
+        WHERE id = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+        hasCafeId ? [status, id, cafeId] : [status, id]
+      );
 
       if (result.affectedRows === 0) {
         throw new Error('Order not found');
       }
 
-      const updatedOrder = await this.getById(id);
+      const updatedOrder = await this.getById(id, cafeId);
 
       // Update analytics metrics (async, non-blocking)
-      if (cafeId && orderDate) {
+      if (orderCafeId && orderDate) {
         const wasCompleted = previousStatus === 'completed';
         const isNowCompleted = status === 'completed';
 
         if (wasCompleted !== isNowCompleted) {
           // Status changed to/from completed - update metrics
-          CafeDailyMetrics.updateOrderCompletion(cafeId, orderDate, finalAmount, isNowCompleted)
+          CafeDailyMetrics.updateOrderCompletion(orderCafeId, orderDate, finalAmount, isNowCompleted)
             .catch(err => {
               console.error('Error updating analytics metrics:', err);
               // Don't throw - aggregation failures shouldn't break order updates
@@ -349,11 +359,12 @@ class Order {
     }
   }
 
-  // Update order details
-  static async update(id, orderData) {
+  // Update order details (optionally scoped by cafeId for multi-cafe)
+  static async update(id, orderData, cafeId = null) {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
+      const hasCafeId = cafeId != null;
 
       const {
         customer_name,
@@ -390,8 +401,8 @@ class Order {
       const safeNotes = notes || null;
 
       // Update order
-      const [orderResult] = await connection.execute(`
-        UPDATE orders SET
+      const [orderResult] = await connection.execute(
+        `UPDATE orders SET
           customer_name = ?,
           customer_email = ?,
           customer_phone = ?,
@@ -407,13 +418,11 @@ class Order {
           extra_charge_note = ?,
           notes = ?,
           updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `, [
-        safeCustomerName, safeCustomerEmail, safeCustomerPhone,
-        safeTotalAmount, safeTaxAmount, safeTipAmount, safeFinalAmount,
-        safePaymentMethod, safeSplitPayment, safeSplitPaymentMethod, safeSplitAmount,
-        safeExtraCharge, safeExtraChargeNote, safeNotes, id
-      ]);
+        WHERE id = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+        hasCafeId
+          ? [safeCustomerName, safeCustomerEmail, safeCustomerPhone, safeTotalAmount, safeTaxAmount, safeTipAmount, safeFinalAmount, safePaymentMethod, safeSplitPayment, safeSplitPaymentMethod, safeSplitAmount, safeExtraCharge, safeExtraChargeNote, safeNotes, id, cafeId]
+          : [safeCustomerName, safeCustomerEmail, safeCustomerPhone, safeTotalAmount, safeTaxAmount, safeTipAmount, safeFinalAmount, safePaymentMethod, safeSplitPayment, safeSplitPaymentMethod, safeSplitAmount, safeExtraCharge, safeExtraChargeNote, safeNotes, id]
+      );
 
       if (orderResult.affectedRows === 0) {
         throw new Error('Order not found');
@@ -444,7 +453,7 @@ class Order {
 
       await connection.commit();
       
-      const result = await this.getById(id);
+      const result = await this.getById(id, cafeId);
       return result;
     } catch (error) {
       console.error('Error updating order:', error);
@@ -455,30 +464,33 @@ class Order {
     }
   }
 
-  // Mark points as awarded for an order
-  static async markPointsAwarded(id) {
+  // Mark points as awarded for an order (optionally scoped by cafeId for multi-cafe)
+  static async markPointsAwarded(id, cafeId = null) {
     try {
-      const [result] = await pool.execute(`
-        UPDATE orders 
+      const hasCafeId = cafeId != null;
+      const [result] = await pool.execute(
+        `UPDATE orders 
         SET points_awarded = TRUE, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `, [id]);
+        WHERE id = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+        hasCafeId ? [id, cafeId] : [id]
+      );
 
       if (result.affectedRows === 0) {
         throw new Error('Order not found');
       }
 
-      return await this.getById(id);
+      return await this.getById(id, cafeId);
     } catch (error) {
       throw new Error(`Error marking points as awarded: ${error.message}`);
     }
   }
 
-  // Get orders by customer phone
-  static async getByCustomerPhone(customerPhone) {
+  // Get orders by customer phone (optionally scoped by cafeId for multi-cafe)
+  static async getByCustomerPhone(customerPhone, cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
-        SELECT 
+      const hasCafeId = cafeId != null;
+      const [rows] = await pool.execute(
+        `SELECT 
           o.id,
           o.order_number,
           o.customer_name,
@@ -506,10 +518,11 @@ class Order {
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
-        WHERE o.customer_phone = ?
+        WHERE o.customer_phone = ? ${hasCafeId ? 'AND o.cafe_id = ?' : ''}
         GROUP BY o.id
-        ORDER BY o.created_at DESC
-      `, [customerPhone]);
+        ORDER BY o.created_at DESC`,
+        hasCafeId ? [customerPhone, cafeId] : [customerPhone]
+      );
 
       return rows.map(order => {
         let items = [];
@@ -547,11 +560,12 @@ class Order {
     }
   }
 
-  // Get orders by order number
-  static async getByOrderNumber(orderNumber) {
+  // Get orders by order number (optionally scoped by cafeId for multi-cafe)
+  static async getByOrderNumber(orderNumber, cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
-        SELECT 
+      const hasCafeId = cafeId != null;
+      const [rows] = await pool.execute(
+        `SELECT 
           o.id,
           o.order_number,
           o.customer_name,
@@ -579,10 +593,11 @@ class Order {
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
-        WHERE o.order_number = ?
+        WHERE o.order_number = ? ${hasCafeId ? 'AND o.cafe_id = ?' : ''}
         GROUP BY o.id
-        ORDER BY o.created_at DESC
-      `, [orderNumber]);
+        ORDER BY o.created_at DESC`,
+        hasCafeId ? [orderNumber, cafeId] : [orderNumber]
+      );
 
       return rows.map(order => {
         let items = [];
@@ -620,11 +635,12 @@ class Order {
     }
   }
 
-  // Get orders by status
-  static async getByStatus(status) {
+  // Get orders by status (optionally scoped by cafeId for multi-cafe)
+  static async getByStatus(status, cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
-        SELECT 
+      const hasCafeId = cafeId != null;
+      const [rows] = await pool.execute(
+        `SELECT 
           o.id,
           o.order_number,
           o.customer_name,
@@ -652,10 +668,11 @@ class Order {
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
-        WHERE o.status = ?
+        WHERE o.status = ? ${hasCafeId ? 'AND o.cafe_id = ?' : ''}
         GROUP BY o.id
-        ORDER BY o.created_at ASC
-      `, [status]);
+        ORDER BY o.created_at ASC`,
+        hasCafeId ? [status, cafeId] : [status]
+      );
 
       return rows.map(order => {
         let items = [];
@@ -693,14 +710,17 @@ class Order {
     }
   }
 
-  // Get order statistics
-  static async getStatistics() {
+  // Get order statistics (optionally scoped by cafeId for multi-cafe)
+  static async getStatistics(cafeId = null) {
     try {
-      const [totalOrders] = await pool.execute('SELECT COUNT(*) as count FROM orders');
-      const [pendingOrders] = await pool.execute("SELECT COUNT(*) as count FROM orders WHERE status = 'pending'");
-      const [preparingOrders] = await pool.execute("SELECT COUNT(*) as count FROM orders WHERE status = 'preparing'");
-      const [readyOrders] = await pool.execute("SELECT COUNT(*) as count FROM orders WHERE status = 'ready'");
-      const [completedOrders] = await pool.execute("SELECT COUNT(*) as count FROM orders WHERE status = 'completed'");
+      const hasCafeId = cafeId != null;
+      const whereClause = hasCafeId ? ' WHERE cafe_id = ?' : '';
+      const params = hasCafeId ? [cafeId] : [];
+      const [totalOrders] = await pool.execute(`SELECT COUNT(*) as count FROM orders${whereClause}`, params);
+      const [pendingOrders] = await pool.execute(`SELECT COUNT(*) as count FROM orders WHERE status = 'pending'${hasCafeId ? ' AND cafe_id = ?' : ''}`, params);
+      const [preparingOrders] = await pool.execute(`SELECT COUNT(*) as count FROM orders WHERE status = 'preparing'${hasCafeId ? ' AND cafe_id = ?' : ''}`, params);
+      const [readyOrders] = await pool.execute(`SELECT COUNT(*) as count FROM orders WHERE status = 'ready'${hasCafeId ? ' AND cafe_id = ?' : ''}`, params);
+      const [completedOrders] = await pool.execute(`SELECT COUNT(*) as count FROM orders WHERE status = 'completed'${hasCafeId ? ' AND cafe_id = ?' : ''}`, params);
 
       return {
         total: totalOrders[0].count,
