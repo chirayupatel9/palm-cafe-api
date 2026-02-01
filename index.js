@@ -5578,12 +5578,90 @@ app.get('/api/reports/top-items', async (req, res) => {
   }
 });
 
-// Inventory Management Routes
+// Inventory Management Routes (multi-cafe: scoped by cafe_id from user/impersonation)
+
+/**
+ * Resolve cafe ID for inventory scope (handles impersonation and superadmin query param).
+ * Returns null only for superadmin without ?cafeId= (meaning "all cafes" for list).
+ */
+function getInventoryCafeId(req) {
+  let cafeId = null;
+  if (req.user) {
+    if (req.impersonation && req.impersonation.isImpersonating) {
+      cafeId = req.impersonation.cafeId;
+    } else if (req.user.cafe_id) {
+      cafeId = req.user.cafe_id;
+    }
+  }
+  if (req.user && req.user.role === 'superadmin' && req.query.cafeId != null && req.query.cafeId !== '') {
+    const parsed = parseInt(req.query.cafeId, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      cafeId = parsed;
+    }
+  }
+  return cafeId;
+}
+
+/** Require cafe scope for non-superadmin; prevents cross-cafe data access when cafe_id is missing. */
+function requireInventoryCafeScope(req, res, next) {
+  const cafeId = getInventoryCafeId(req);
+  if (cafeId != null) return next();
+  if (req.user && req.user.role === 'superadmin') return next();
+  return res.status(403).json({
+    error: 'You must be assigned to a cafe to access inventory.',
+    code: 'CAFE_SCOPE_REQUIRED'
+  });
+}
+
+/** Parse inventory item ID from params; returns { valid, value } or { valid: false, status, error }. */
+function parseInventoryId(idParam) {
+  if (idParam == null || idParam === '') {
+    return { valid: false, status: 400, error: 'Inventory item ID is required' };
+  }
+  const parsed = parseInt(idParam, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return { valid: false, status: 400, error: 'Invalid inventory item ID' };
+  }
+  return { valid: true, value: parsed };
+}
+
+/** Validate inventory quantity (required, non-negative number). */
+function validateQuantity(value) {
+  if (value === undefined || value === null || value === '') return { valid: false, error: 'Quantity is required' };
+  const num = Number(value);
+  if (Number.isNaN(num) || num < 0) return { valid: false, error: 'Quantity must be a non-negative number' };
+  return { valid: true, value: num };
+}
+
+/** Inventory field max lengths (match DB schema). */
+const INVENTORY_LIMITS = {
+  name: 200,
+  category: 100,
+  unit: 50,
+  supplier: 200
+};
+
+function validateInventoryStrings(data) {
+  if (data.name && data.name.length > INVENTORY_LIMITS.name) {
+    return { valid: false, error: `Name must be at most ${INVENTORY_LIMITS.name} characters` };
+  }
+  if (data.category && data.category.length > INVENTORY_LIMITS.category) {
+    return { valid: false, error: `Category must be at most ${INVENTORY_LIMITS.category} characters` };
+  }
+  if (data.unit && data.unit.length > INVENTORY_LIMITS.unit) {
+    return { valid: false, error: `Unit must be at most ${INVENTORY_LIMITS.unit} characters` };
+  }
+  if (data.supplier && data.supplier.length > INVENTORY_LIMITS.supplier) {
+    return { valid: false, error: `Supplier must be at most ${INVENTORY_LIMITS.supplier} characters` };
+  }
+  return { valid: true };
+}
 
 // Get all inventory items
-app.get('/api/inventory', auth, requireActiveSubscription, requireFeature('inventory'), async (req, res) => {
+app.get('/api/inventory', auth, requireActiveSubscription, requireFeature('inventory'), requireInventoryCafeScope, async (req, res) => {
   try {
-    const inventory = await Inventory.getAll();
+    const cafeId = getInventoryCafeId(req);
+    const inventory = await Inventory.getAll(cafeId);
     res.json(inventory);
   } catch (error) {
     console.error('Error fetching inventory:', error);
@@ -5592,24 +5670,55 @@ app.get('/api/inventory', auth, requireActiveSubscription, requireFeature('inven
 });
 
 // Create new inventory item
-app.post('/api/inventory', auth, requireActiveSubscription, requireFeature('inventory'), async (req, res) => {
+app.post('/api/inventory', auth, requireActiveSubscription, requireFeature('inventory'), requireInventoryCafeScope, async (req, res) => {
   try {
+    const cafeId = getInventoryCafeId(req);
+    if (!cafeId) {
+      return res.status(400).json({ error: 'Unable to determine cafe. Please ensure you are logged in and belong to a cafe.' });
+    }
     const { name, category, quantity, unit, cost_per_unit, supplier, reorder_level, description } = req.body;
-    
-    if (!name || !category || !quantity || !unit) {
-      return res.status(400).json({ error: 'Name, category, quantity, and unit are required' });
+
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required and must be non-empty' });
+    }
+    if (!category || typeof category !== 'string' || !category.trim()) {
+      return res.status(400).json({ error: 'Category is required and must be non-empty' });
+    }
+    if (!unit || typeof unit !== 'string' || !unit.trim()) {
+      return res.status(400).json({ error: 'Unit is required and must be non-empty' });
+    }
+    const qtyCheck = validateQuantity(quantity);
+    if (!qtyCheck.valid) {
+      return res.status(400).json({ error: qtyCheck.error });
+    }
+    const costNum = cost_per_unit != null && cost_per_unit !== '' ? parseFloat(cost_per_unit) : null;
+    if (costNum !== null && (Number.isNaN(costNum) || costNum < 0)) {
+      return res.status(400).json({ error: 'Cost per unit must be a non-negative number' });
+    }
+    const reorderNum = reorder_level != null && reorder_level !== '' ? parseFloat(reorder_level) : null;
+    if (reorderNum !== null && (Number.isNaN(reorderNum) || reorderNum < 0)) {
+      return res.status(400).json({ error: 'Reorder level must be a non-negative number' });
+    }
+    const strCheck = validateInventoryStrings({
+      name: name.trim(),
+      category: category.trim(),
+      unit: unit.trim(),
+      supplier: supplier != null ? String(supplier).trim() : null
+    });
+    if (!strCheck.valid) {
+      return res.status(400).json({ error: strCheck.error });
     }
 
     const newItem = await Inventory.create({
-      name,
-      category,
-      quantity: parseFloat(quantity),
-      unit,
-      cost_per_unit: cost_per_unit ? parseFloat(cost_per_unit) : null,
-      supplier,
-      reorder_level: reorder_level ? parseFloat(reorder_level) : null,
-      description
-    });
+      name: name.trim(),
+      category: category.trim(),
+      quantity: qtyCheck.value,
+      unit: unit.trim(),
+      cost_per_unit: costNum,
+      supplier: supplier != null ? String(supplier).trim() || null : null,
+      reorder_level: reorderNum,
+      description: description != null ? String(description).trim() || null : null
+    }, cafeId);
 
     res.status(201).json(newItem);
   } catch (error) {
@@ -5619,49 +5728,97 @@ app.post('/api/inventory', auth, requireActiveSubscription, requireFeature('inve
 });
 
 // Update inventory item
-app.put('/api/inventory/:id', auth, async (req, res) => {
+app.put('/api/inventory/:id', auth, requireFeature('inventory'), requireInventoryCafeScope, async (req, res) => {
   try {
-    const { id } = req.params;
+    const idResult = parseInventoryId(req.params.id);
+    if (!idResult.valid) {
+      return res.status(idResult.status).json({ error: idResult.error });
+    }
+    const cafeId = getInventoryCafeId(req);
     const { name, category, quantity, unit, cost_per_unit, supplier, reorder_level, description } = req.body;
-    
-    if (!name || !category || !quantity || !unit) {
-      return res.status(400).json({ error: 'Name, category, quantity, and unit are required' });
+
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required and must be non-empty' });
+    }
+    if (!category || typeof category !== 'string' || !category.trim()) {
+      return res.status(400).json({ error: 'Category is required and must be non-empty' });
+    }
+    if (!unit || typeof unit !== 'string' || !unit.trim()) {
+      return res.status(400).json({ error: 'Unit is required and must be non-empty' });
+    }
+    const qtyCheck = validateQuantity(quantity);
+    if (!qtyCheck.valid) {
+      return res.status(400).json({ error: qtyCheck.error });
+    }
+    const costNum = cost_per_unit != null && cost_per_unit !== '' ? parseFloat(cost_per_unit) : null;
+    if (costNum !== null && (Number.isNaN(costNum) || costNum < 0)) {
+      return res.status(400).json({ error: 'Cost per unit must be a non-negative number' });
+    }
+    const reorderNum = reorder_level != null && reorder_level !== '' ? parseFloat(reorder_level) : null;
+    if (reorderNum !== null && (Number.isNaN(reorderNum) || reorderNum < 0)) {
+      return res.status(400).json({ error: 'Reorder level must be a non-negative number' });
+    }
+    const strCheck = validateInventoryStrings({
+      name: name.trim(),
+      category: category.trim(),
+      unit: unit.trim(),
+      supplier: supplier != null ? String(supplier).trim() : null
+    });
+    if (!strCheck.valid) {
+      return res.status(400).json({ error: strCheck.error });
     }
 
-    const updatedItem = await Inventory.update(id, {
-      name,
-      category,
-      quantity: parseFloat(quantity),
-      unit,
-      cost_per_unit: cost_per_unit ? parseFloat(cost_per_unit) : null,
-      supplier,
-      reorder_level: reorder_level ? parseFloat(reorder_level) : null,
-      description
-    });
+    const updatedItem = await Inventory.update(idResult.value, {
+      name: name.trim(),
+      category: category.trim(),
+      quantity: qtyCheck.value,
+      unit: unit.trim(),
+      cost_per_unit: costNum,
+      supplier: supplier != null ? String(supplier).trim() || null : null,
+      reorder_level: reorderNum,
+      description: description != null ? String(description).trim() || null : null
+    }, cafeId);
 
     res.json(updatedItem);
   } catch (error) {
+    if (error.message === 'Inventory item not found') {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+    if (error.message === 'Invalid inventory item ID') {
+      return res.status(400).json({ error: error.message });
+    }
     console.error('Error updating inventory item:', error);
     res.status(500).json({ error: 'Failed to update inventory item' });
   }
 });
 
 // Delete inventory item
-app.delete('/api/inventory/:id', auth, async (req, res) => {
+app.delete('/api/inventory/:id', auth, requireFeature('inventory'), requireInventoryCafeScope, async (req, res) => {
   try {
-    const { id } = req.params;
-    await Inventory.delete(id);
+    const idResult = parseInventoryId(req.params.id);
+    if (!idResult.valid) {
+      return res.status(idResult.status).json({ error: idResult.error });
+    }
+    const cafeId = getInventoryCafeId(req);
+    await Inventory.delete(idResult.value, cafeId);
     res.json({ message: 'Inventory item deleted successfully' });
   } catch (error) {
+    if (error.message === 'Inventory item not found') {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+    if (error.message === 'Invalid inventory item ID') {
+      return res.status(400).json({ error: error.message });
+    }
     console.error('Error deleting inventory item:', error);
     res.status(500).json({ error: 'Failed to delete inventory item' });
   }
 });
 
 // Get inventory categories
-app.get('/api/inventory/categories', auth, async (req, res) => {
+app.get('/api/inventory/categories', auth, requireFeature('inventory'), requireInventoryCafeScope, async (req, res) => {
   try {
-    const categories = await Inventory.getCategories();
+    const cafeId = getInventoryCafeId(req);
+    const categories = await Inventory.getCategories(cafeId);
     res.json(categories);
   } catch (error) {
     console.error('Error fetching inventory categories:', error);
@@ -5670,27 +5827,36 @@ app.get('/api/inventory/categories', auth, async (req, res) => {
 });
 
 // Update stock quantity
-app.patch('/api/inventory/:id/stock', auth, async (req, res) => {
+app.patch('/api/inventory/:id/stock', auth, requireFeature('inventory'), requireInventoryCafeScope, async (req, res) => {
   try {
-    const { id } = req.params;
-    const { quantity } = req.body;
-    
-    if (quantity === undefined || quantity < 0) {
-      return res.status(400).json({ error: 'Valid quantity is required' });
+    const idResult = parseInventoryId(req.params.id);
+    if (!idResult.valid) {
+      return res.status(idResult.status).json({ error: idResult.error });
     }
-
-    await Inventory.updateStock(id, parseFloat(quantity));
+    const qtyCheck = validateQuantity(req.body.quantity);
+    if (!qtyCheck.valid) {
+      return res.status(400).json({ error: qtyCheck.error || 'Valid quantity is required' });
+    }
+    const cafeId = getInventoryCafeId(req);
+    await Inventory.updateStock(idResult.value, qtyCheck.value, cafeId);
     res.json({ message: 'Stock updated successfully' });
   } catch (error) {
+    if (error.message === 'Inventory item not found') {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+    if (error.message === 'Invalid inventory item ID' || error.message === 'Quantity must be a non-negative number') {
+      return res.status(400).json({ error: error.message });
+    }
     console.error('Error updating stock:', error);
     res.status(500).json({ error: 'Failed to update stock' });
   }
 });
 
 // Get low stock items
-app.get('/api/inventory/low-stock', auth, async (req, res) => {
+app.get('/api/inventory/low-stock', auth, requireFeature('inventory'), requireInventoryCafeScope, async (req, res) => {
   try {
-    const lowStockItems = await Inventory.getLowStockItems();
+    const cafeId = getInventoryCafeId(req);
+    const lowStockItems = await Inventory.getLowStockItems(cafeId);
     res.json(lowStockItems);
   } catch (error) {
     console.error('Error fetching low stock items:', error);
@@ -5699,9 +5865,10 @@ app.get('/api/inventory/low-stock', auth, async (req, res) => {
 });
 
 // Get out of stock items
-app.get('/api/inventory/out-of-stock', auth, async (req, res) => {
+app.get('/api/inventory/out-of-stock', auth, requireFeature('inventory'), requireInventoryCafeScope, async (req, res) => {
   try {
-    const outOfStockItems = await Inventory.getOutOfStockItems();
+    const cafeId = getInventoryCafeId(req);
+    const outOfStockItems = await Inventory.getOutOfStockItems(cafeId);
     res.json(outOfStockItems);
   } catch (error) {
     console.error('Error fetching out of stock items:', error);
@@ -5710,9 +5877,10 @@ app.get('/api/inventory/out-of-stock', auth, async (req, res) => {
 });
 
 // Get inventory statistics
-app.get('/api/inventory/statistics', auth, async (req, res) => {
+app.get('/api/inventory/statistics', auth, requireFeature('inventory'), requireInventoryCafeScope, async (req, res) => {
   try {
-    const statistics = await Inventory.getStatistics();
+    const cafeId = getInventoryCafeId(req);
+    const statistics = await Inventory.getStatistics(cafeId);
     res.json(statistics);
   } catch (error) {
     console.error('Error fetching inventory statistics:', error);
@@ -5721,10 +5889,11 @@ app.get('/api/inventory/statistics', auth, async (req, res) => {
 });
 
 // Export inventory to Excel
-app.get('/api/inventory/export', auth, async (req, res) => {
+app.get('/api/inventory/export', auth, requireFeature('inventory'), requireInventoryCafeScope, async (req, res) => {
   try {
-    const { buffer, filename } = await Inventory.exportToExcel();
-    
+    const cafeId = getInventoryCafeId(req);
+    const { buffer, filename } = await Inventory.exportToExcel(cafeId);
+
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -5735,10 +5904,10 @@ app.get('/api/inventory/export', auth, async (req, res) => {
 });
 
 // Get inventory import template
-app.get('/api/inventory/template', auth, async (req, res) => {
+app.get('/api/inventory/template', auth, requireFeature('inventory'), async (req, res) => {
   try {
     const { buffer, filename } = await Inventory.getImportTemplate();
-    
+
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -5749,14 +5918,18 @@ app.get('/api/inventory/template', auth, async (req, res) => {
 });
 
 // Import inventory from Excel
-app.post('/api/inventory/import', auth, uploadLimiter, upload.single('file'), async (req, res) => {
+app.post('/api/inventory/import', auth, requireFeature('inventory'), requireInventoryCafeScope, uploadLimiter, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
+    const cafeId = getInventoryCafeId(req);
+    if (!cafeId) {
+      return res.status(400).json({ error: 'Unable to determine cafe. Import is only available when logged in to a cafe.' });
+    }
 
-    const results = await Inventory.importFromExcel(req.file.buffer);
-    
+    const results = await Inventory.importFromExcel(req.file.buffer, cafeId);
+
     res.json({
       message: 'Import completed',
       results: {
@@ -5777,17 +5950,24 @@ app.post('/api/inventory/import', auth, uploadLimiter, upload.single('file'), as
 
 
 // Get inventory item by ID (must come after specific routes)
-app.get('/api/inventory/:id', auth, async (req, res) => {
+app.get('/api/inventory/:id', auth, requireFeature('inventory'), requireInventoryCafeScope, async (req, res) => {
   try {
-    const { id } = req.params;
-    const item = await Inventory.getById(id);
-    
+    const idResult = parseInventoryId(req.params.id);
+    if (!idResult.valid) {
+      return res.status(idResult.status).json({ error: idResult.error });
+    }
+    const cafeId = getInventoryCafeId(req);
+    const item = await Inventory.getById(idResult.value, cafeId);
+
     if (!item) {
       return res.status(404).json({ error: 'Inventory item not found' });
     }
-    
+
     res.json(item);
   } catch (error) {
+    if (error.message === 'Invalid inventory item ID') {
+      return res.status(400).json({ error: error.message });
+    }
     console.error('Error fetching inventory item:', error);
     res.status(500).json({ error: 'Failed to fetch inventory item' });
   }

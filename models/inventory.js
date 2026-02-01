@@ -2,11 +2,12 @@ const { pool } = require('../config/database');
 const XLSX = require('xlsx');
 
 class Inventory {
-  // Get all inventory items
-  static async getAll() {
+  // Get all inventory items (optionally scoped by cafeId for multi-cafe)
+  static async getAll(cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
-        SELECT 
+      const hasCafeId = cafeId != null;
+      const [rows] = await pool.execute(
+        `SELECT 
           id,
           name,
           category,
@@ -19,8 +20,10 @@ class Inventory {
           created_at,
           updated_at
         FROM inventory
-        ORDER BY name ASC
-      `);
+        ${hasCafeId ? 'WHERE cafe_id = ?' : ''}
+        ORDER BY name ASC`,
+        hasCafeId ? [cafeId] : []
+      );
 
       return rows.map(item => ({
         ...item,
@@ -33,11 +36,16 @@ class Inventory {
     }
   }
 
-  // Get inventory item by ID
-  static async getById(id) {
+  // Get inventory item by ID (optionally scoped by cafeId for multi-cafe)
+  static async getById(id, cafeId = null) {
+    const itemId = parseInt(id, 10);
+    if (!Number.isInteger(itemId) || itemId < 1) {
+      throw new Error('Invalid inventory item ID');
+    }
     try {
-      const [rows] = await pool.execute(`
-        SELECT 
+      const hasCafeId = cafeId != null;
+      const [rows] = await pool.execute(
+        `SELECT 
           id,
           name,
           category,
@@ -50,8 +58,9 @@ class Inventory {
           created_at,
           updated_at
         FROM inventory
-        WHERE id = ?
-      `, [id]);
+        WHERE id = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+        hasCafeId ? [itemId, cafeId] : [itemId]
+      );
 
       if (rows.length === 0) {
         return null;
@@ -65,12 +74,13 @@ class Inventory {
         reorder_level: parseFloat(item.reorder_level)
       };
     } catch (error) {
+      if (error.message === 'Invalid inventory item ID') throw error;
       throw new Error(`Error fetching inventory item: ${error.message}`);
     }
   }
 
-  // Create new inventory item
-  static async create(inventoryData) {
+  // Create new inventory item (cafeId required for multi-cafe)
+  static async create(inventoryData, cafeId = null) {
     try {
       const {
         name,
@@ -83,15 +93,16 @@ class Inventory {
         description
       } = inventoryData;
 
-      const [result] = await pool.execute(`
-        INSERT INTO inventory (
+      const hasCafeId = cafeId != null;
+      const [result] = await pool.execute(
+        `INSERT INTO inventory (
           name, category, quantity, unit, cost_per_unit, 
-          supplier, reorder_level, description
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        name, category, quantity, unit, cost_per_unit || null,
-        supplier || null, reorder_level || null, description || null
-      ]);
+          supplier, reorder_level, description${hasCafeId ? ', cafe_id' : ''}
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?${hasCafeId ? ', ?' : ''})`,
+        hasCafeId
+          ? [name, category, quantity, unit, cost_per_unit || null, supplier || null, reorder_level || null, description || null, cafeId]
+          : [name, category, quantity, unit, cost_per_unit || null, supplier || null, reorder_level || null, description || null]
+      );
 
       return { id: result.insertId, ...inventoryData };
     } catch (error) {
@@ -99,8 +110,12 @@ class Inventory {
     }
   }
 
-  // Update inventory item
-  static async update(id, inventoryData) {
+  // Update inventory item (optionally scoped by cafeId for multi-cafe)
+  static async update(id, inventoryData, cafeId = null) {
+    const itemId = parseInt(id, 10);
+    if (!Number.isInteger(itemId) || itemId < 1) {
+      throw new Error('Invalid inventory item ID');
+    }
     try {
       const {
         name,
@@ -113,8 +128,9 @@ class Inventory {
         description
       } = inventoryData;
 
-      const [result] = await pool.execute(`
-        UPDATE inventory SET
+      const hasCafeId = cafeId != null;
+      const [result] = await pool.execute(
+        `UPDATE inventory SET
           name = ?,
           category = ?,
           quantity = ?,
@@ -124,11 +140,11 @@ class Inventory {
           reorder_level = ?,
           description = ?,
           updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `, [
-        name, category, quantity, unit, cost_per_unit || null,
-        supplier || null, reorder_level || null, description || null, id
-      ]);
+        WHERE id = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+        hasCafeId
+          ? [name, category, quantity, unit, cost_per_unit || null, supplier || null, reorder_level || null, description || null, itemId, cafeId]
+          : [name, category, quantity, unit, cost_per_unit || null, supplier || null, reorder_level || null, description || null, itemId]
+      );
 
       if (result.affectedRows === 0) {
         throw new Error('Inventory item not found');
@@ -140,33 +156,40 @@ class Inventory {
     }
   }
 
-  // Delete inventory item
-  static async delete(id) {
+  // Delete inventory item (optionally scoped by cafeId for multi-cafe)
+  static async delete(id, cafeId = null) {
     try {
-      const [result] = await pool.execute('DELETE FROM inventory WHERE id = ?', [id]);
-      
+      const hasCafeId = cafeId != null;
+      const [result] = await pool.execute(
+        `DELETE FROM inventory WHERE id = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+        hasCafeId ? [itemId, cafeId] : [itemId]
+      );
+
       if (result.affectedRows === 0) {
         throw new Error('Inventory item not found');
       }
 
       return true;
     } catch (error) {
+      if (error.message === 'Invalid inventory item ID') throw error;
       throw new Error(`Error deleting inventory item: ${error.message}`);
     }
   }
 
-  // Get inventory categories
-  static async getCategories() {
+  // Get inventory categories (optionally scoped by cafeId for multi-cafe)
+  static async getCategories(cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
-        SELECT DISTINCT 
+      const hasCafeId = cafeId != null;
+      const [rows] = await pool.execute(
+        `SELECT DISTINCT 
           category,
           COUNT(*) as item_count
         FROM inventory 
-        WHERE category IS NOT NULL AND category != ''
+        WHERE category IS NOT NULL AND category != '' ${hasCafeId ? 'AND cafe_id = ?' : ''}
         GROUP BY category
-        ORDER BY category ASC
-      `);
+        ORDER BY category ASC`,
+        hasCafeId ? [cafeId] : []
+      );
 
       return rows.map(row => ({
         name: row.category,
@@ -177,14 +200,24 @@ class Inventory {
     }
   }
 
-  // Update stock quantity
-  static async updateStock(id, newQuantity) {
+  // Update stock quantity (optionally scoped by cafeId for multi-cafe)
+  static async updateStock(id, newQuantity, cafeId = null) {
+    const itemId = parseInt(id, 10);
+    if (!Number.isInteger(itemId) || itemId < 1) {
+      throw new Error('Invalid inventory item ID');
+    }
+    const qty = Number(newQuantity);
+    if (Number.isNaN(qty) || qty < 0) {
+      throw new Error('Quantity must be a non-negative number');
+    }
     try {
-      const [result] = await pool.execute(`
-        UPDATE inventory 
+      const hasCafeId = cafeId != null;
+      const [result] = await pool.execute(
+        `UPDATE inventory 
         SET quantity = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `, [newQuantity, id]);
+        WHERE id = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+        hasCafeId ? [qty, itemId, cafeId] : [qty, itemId]
+      );
 
       if (result.affectedRows === 0) {
         throw new Error('Inventory item not found');
@@ -192,20 +225,23 @@ class Inventory {
 
       return true;
     } catch (error) {
+      if (error.message === 'Invalid inventory item ID' || error.message === 'Quantity must be a non-negative number') throw error;
       throw new Error(`Error updating stock: ${error.message}`);
     }
   }
 
-  // Get low stock items
-  static async getLowStockItems() {
+  // Get low stock items (optionally scoped by cafeId for multi-cafe)
+  static async getLowStockItems(cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
-        SELECT 
+      const hasCafeId = cafeId != null;
+      const [rows] = await pool.execute(
+        `SELECT 
           id, name, category, quantity, unit, reorder_level
         FROM inventory
-        WHERE quantity <= reorder_level AND reorder_level > 0
-        ORDER BY quantity ASC
-      `);
+        WHERE quantity <= reorder_level AND reorder_level > 0 ${hasCafeId ? 'AND cafe_id = ?' : ''}
+        ORDER BY quantity ASC`,
+        hasCafeId ? [cafeId] : []
+      );
 
       return rows.map(item => ({
         ...item,
@@ -217,16 +253,18 @@ class Inventory {
     }
   }
 
-  // Get out of stock items
-  static async getOutOfStockItems() {
+  // Get out of stock items (optionally scoped by cafeId for multi-cafe)
+  static async getOutOfStockItems(cafeId = null) {
     try {
-      const [rows] = await pool.execute(`
-        SELECT 
+      const hasCafeId = cafeId != null;
+      const [rows] = await pool.execute(
+        `SELECT 
           id, name, category, quantity, unit
         FROM inventory
-        WHERE quantity <= 0
-        ORDER BY name ASC
-      `);
+        WHERE quantity <= 0 ${hasCafeId ? 'AND cafe_id = ?' : ''}
+        ORDER BY name ASC`,
+        hasCafeId ? [cafeId] : []
+      );
 
       return rows.map(item => ({
         ...item,
@@ -237,24 +275,31 @@ class Inventory {
     }
   }
 
-  // Get inventory statistics
-  static async getStatistics() {
+  // Get inventory statistics (optionally scoped by cafeId for multi-cafe)
+  static async getStatistics(cafeId = null) {
     try {
-      const [totalItems] = await pool.execute('SELECT COUNT(*) as count FROM inventory');
-      const [lowStockItems] = await pool.execute(`
-        SELECT COUNT(*) as count 
+      const hasCafeId = cafeId != null;
+      const whereClause = hasCafeId ? ' WHERE cafe_id = ?' : '';
+      const params = hasCafeId ? [cafeId] : [];
+
+      const [totalItems] = await pool.execute(`SELECT COUNT(*) as count FROM inventory${whereClause}`, params);
+      const [lowStockItems] = await pool.execute(
+        `SELECT COUNT(*) as count 
         FROM inventory 
-        WHERE quantity <= reorder_level AND reorder_level > 0
-      `);
-      const [outOfStockItems] = await pool.execute(`
-        SELECT COUNT(*) as count 
+        WHERE quantity <= reorder_level AND reorder_level > 0${hasCafeId ? ' AND cafe_id = ?' : ''}`,
+        params
+      );
+      const [outOfStockItems] = await pool.execute(
+        `SELECT COUNT(*) as count 
         FROM inventory 
-        WHERE quantity <= 0
-      `);
-      const [totalValue] = await pool.execute(`
-        SELECT SUM(quantity * COALESCE(cost_per_unit, 0)) as total_value 
-        FROM inventory
-      `);
+        WHERE quantity <= 0${hasCafeId ? ' AND cafe_id = ?' : ''}`,
+        params
+      );
+      const [totalValue] = await pool.execute(
+        `SELECT COALESCE(SUM(quantity * COALESCE(cost_per_unit, 0)), 0) as total_value 
+        FROM inventory${whereClause}`,
+        params
+      );
 
       return {
         totalItems: totalItems[0].count,
@@ -267,10 +312,10 @@ class Inventory {
     }
   }
 
-  // Export inventory to Excel
-  static async exportToExcel() {
+  // Export inventory to Excel (optionally scoped by cafeId for multi-cafe)
+  static async exportToExcel(cafeId = null) {
     try {
-      const inventory = await this.getAll();
+      const inventory = await this.getAll(cafeId);
       
       // Transform data for Excel
       const excelData = inventory.map(item => ({
@@ -324,10 +369,11 @@ class Inventory {
     }
   }
 
-  // Import inventory from Excel
-  static async importFromExcel(fileBuffer) {
+  // Import inventory from Excel (cafeId required for multi-cafe; imported items belong to this cafe)
+  static async importFromExcel(fileBuffer, cafeId = null) {
     const connection = await pool.getConnection();
-    
+    const hasCafeId = cafeId != null;
+
     try {
       await connection.beginTransaction();
 
@@ -358,14 +404,14 @@ class Inventory {
           const costPerUnit = parseFloat(row['Cost per Unit']) || null;
           const reorderLevel = parseFloat(row['Reorder Level']) || null;
 
-          // Check if item already exists (by name and category)
+          // Check if item already exists (by name and category, and cafe when multi-cafe)
           const [existing] = await connection.execute(
-            'SELECT id FROM inventory WHERE name = ? AND category = ?',
-            [row.Name.trim(), row.Category.trim()]
+            `SELECT id FROM inventory WHERE name = ? AND category = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+            hasCafeId ? [row.Name.trim(), row.Category.trim(), cafeId] : [row.Name.trim(), row.Category.trim()]
           );
 
           if (existing.length > 0) {
-            // Update existing item
+            // Update existing item (already scoped by cafe when hasCafeId)
             await connection.execute(`
               UPDATE inventory SET
                 quantity = ?,
@@ -386,22 +432,35 @@ class Inventory {
               existing[0].id
             ]);
           } else {
-            // Create new item
-            await connection.execute(`
-              INSERT INTO inventory (
+            // Create new item (set cafe_id when multi-cafe)
+            await connection.execute(
+              `INSERT INTO inventory (
                 name, category, quantity, unit, cost_per_unit, 
-                supplier, reorder_level, description
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `, [
-              row.Name.trim(),
-              row.Category.trim(),
-              quantity,
-              row.Unit.trim(),
-              costPerUnit,
-              row.Supplier ? row.Supplier.trim() : null,
-              reorderLevel,
-              row.Description ? row.Description.trim() : null
-            ]);
+                supplier, reorder_level, description${hasCafeId ? ', cafe_id' : ''}
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?${hasCafeId ? ', ?' : ''})`,
+              hasCafeId
+                ? [
+                    row.Name.trim(),
+                    row.Category.trim(),
+                    quantity,
+                    row.Unit.trim(),
+                    costPerUnit,
+                    row.Supplier ? row.Supplier.trim() : null,
+                    reorderLevel,
+                    row.Description ? row.Description.trim() : null,
+                    cafeId
+                  ]
+                : [
+                    row.Name.trim(),
+                    row.Category.trim(),
+                    quantity,
+                    row.Unit.trim(),
+                    costPerUnit,
+                    row.Supplier ? row.Supplier.trim() : null,
+                    reorderLevel,
+                    row.Description ? row.Description.trim() : null
+                  ]
+            );
           }
 
           results.successful++;
