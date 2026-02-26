@@ -1,9 +1,10 @@
 const rateLimit = require('express-rate-limit');
 const logger = require('../config/logger');
 
+// General API: 500 requests per 5 min per IP (stricter in production)
 const generalLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
-  max: 10000,
+  max: process.env.NODE_ENV === 'production' ? 500 : 10000,
   message: {
     error: 'Too many requests from this IP, please try again later.',
     retryAfter: 900
@@ -19,10 +20,10 @@ const generalLimiter = rateLimit({
   }
 });
 
-// Stricter rate limiter for authentication routes
+// Auth routes: 20 attempts per 5 min per IP (stricter in production)
 const authLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 5000, // limit each IP to 5 requests per windowMs
+  windowMs: 5 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 20 : 100,
   message: {
     error: 'Too many authentication attempts, please try again later.',
     retryAfter: 900

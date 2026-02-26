@@ -134,8 +134,9 @@ const startServer = async () => {
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // In production, you might want to exit the process
-  // For now, we'll just log it
+  if (process.env.NODE_ENV === 'production') {
+    process.exit(1);
+  }
 });
 
 // Handle uncaught exceptions
