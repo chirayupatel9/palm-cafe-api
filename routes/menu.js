@@ -298,7 +298,7 @@ app.get('/api/menu', async (req, res) => {
       }
     }
     
-    logger.info('[GET /api/menu] Fetching menu items', {
+    logger.debug('[GET /api/menu] Fetching menu items', {
       cafeId,
       hasToken: !!token,
       cafeSlug: req.query.cafeSlug
@@ -306,7 +306,7 @@ app.get('/api/menu', async (req, res) => {
     
     const menuItems = await MenuItem.getAll(cafeId);
     
-    logger.info('[GET /api/menu] Menu items fetched', {
+    logger.debug('[GET /api/menu] Menu items fetched', {
       cafeId,
       itemCount: menuItems.length
     });
@@ -352,7 +352,7 @@ app.get('/api/admin/menu', auth, requireActiveSubscription, requireFeature('menu
       }
     }
     
-    logger.info('[GET /api/admin/menu] Fetching menu items', {
+    logger.debug('[GET /api/admin/menu] Fetching menu items', {
       cafeId,
       userId: req.user?.id,
       impersonating: req.impersonation?.isImpersonating
@@ -360,7 +360,7 @@ app.get('/api/admin/menu', auth, requireActiveSubscription, requireFeature('menu
     
     const menuItems = await MenuItem.getAll(cafeId);
     
-    logger.info('[GET /api/admin/menu] Menu items fetched', {
+    logger.debug('[GET /api/admin/menu] Menu items fetched', {
       cafeId,
       itemCount: menuItems.length
     });
@@ -1667,8 +1667,8 @@ app.get('/api/menu/branding', async (req, res) => {
         `);
 
         const existingBrandingColumns = brandingColumns.map(col => col.COLUMN_NAME);
-        logger.info('[BRANDING] Branding columns found:', existingBrandingColumns);
-        logger.info('[BRANDING] Querying for cafe_id:', cafe.id);
+        logger.debug('[BRANDING] Branding columns found:', existingBrandingColumns);
+        logger.debug('[BRANDING] Querying for cafe_id:', cafe.id);
 
         if (existingBrandingColumns.length > 0) {
           const selectColumns = existingBrandingColumns.join(', ');
@@ -1677,20 +1677,20 @@ app.get('/api/menu/branding', async (req, res) => {
             [cafe.id]
           );
 
-          logger.info('[BRANDING] Settings found:', settings.length, 'rows');
+          logger.debug('[BRANDING] Settings found:', settings.length, 'rows');
           if (settings.length > 0) {
-            logger.info('[BRANDING] Settings data:', JSON.stringify(settings[0], null, 2));
+            logger.debug('[BRANDING] Settings data:', JSON.stringify(settings[0], null, 2));
             if (existingBrandingColumns.includes('hero_image_url')) {
               heroImageUrl = settings[0].hero_image_url || null;
-              logger.info('[BRANDING] hero_image_url:', heroImageUrl);
+              logger.debug('[BRANDING] hero_image_url:', heroImageUrl);
             }
             if (existingBrandingColumns.includes('promo_banner_image_url')) {
               promoBannerImageUrl = settings[0].promo_banner_image_url || null;
-              logger.info('[BRANDING] promo_banner_image_url:', promoBannerImageUrl);
+              logger.debug('[BRANDING] promo_banner_image_url:', promoBannerImageUrl);
             }
             if (existingBrandingColumns.includes('logo_url')) {
               logoUrl = settings[0].logo_url || null;
-              logger.info('[BRANDING] logo_url:', logoUrl);
+              logger.debug('[BRANDING] logo_url:', logoUrl);
             }
           } else {
             // Debug: Check if any settings exist for this cafe (active or inactive)
@@ -1698,13 +1698,13 @@ app.get('/api/menu/branding', async (req, res) => {
               `SELECT cafe_id, is_active, hero_image_url, promo_banner_image_url, logo_url, created_at FROM cafe_settings WHERE cafe_id = ? ORDER BY created_at DESC LIMIT 5`,
               [cafe.id]
             );
-            logger.info('[BRANDING] All settings for cafe_id', cafe.id, ':', JSON.stringify(allSettings, null, 2));
+            logger.debug('[BRANDING] All settings for cafe_id', cafe.id, ':', JSON.stringify(allSettings, null, 2));
             
             // Also check if there are any settings without cafe_id filter
             const [anySettings] = await pool.execute(
               `SELECT cafe_id, is_active, hero_image_url, promo_banner_image_url, logo_url FROM cafe_settings ORDER BY created_at DESC LIMIT 5`
             );
-            logger.info('[BRANDING] Recent settings (any cafe):', JSON.stringify(anySettings, null, 2));
+            logger.debug('[BRANDING] Recent settings (any cafe):', JSON.stringify(anySettings, null, 2));
           }
         }
       } else {
@@ -1913,20 +1913,20 @@ app.get('/api/cafe-settings', async (req, res) => {
             // User is impersonating - use impersonated cafe_id
             cafeId = decoded.impersonatedCafeId;
             cafeSlug = decoded.impersonatedCafeSlug || null;
-            logger.info('[CAFE-SETTINGS] Using impersonated cafe_id:', cafeId, 'slug:', cafeSlug);
+            logger.debug('[CAFE-SETTINGS] Using impersonated cafe_id:', cafeId, 'slug:', cafeSlug);
           } else {
             // Normal user - get their cafe_id and slug
             const userWithCafe = await User.findByIdWithCafe(user.id);
             if (userWithCafe && userWithCafe.cafe_id) {
               cafeId = userWithCafe.cafe_id;
               cafeSlug = userWithCafe.cafe_slug || null;
-              logger.info('[CAFE-SETTINGS] Using user cafe_id:', cafeId, 'slug:', cafeSlug);
+              logger.debug('[CAFE-SETTINGS] Using user cafe_id:', cafeId, 'slug:', cafeSlug);
             }
           }
         }
       } catch (error) {
         // Token invalid or expired, continue as unauthenticated user
-        logger.info('[CAFE-SETTINGS] Token invalid, continuing as unauthenticated');
+        logger.debug('[CAFE-SETTINGS] Token invalid, continuing as unauthenticated');
       }
     }
     
@@ -1937,17 +1937,17 @@ app.get('/api/cafe-settings', async (req, res) => {
         const cafe = await Cafe.getBySlug(cafeSlug);
         if (cafe) {
           cafeId = cafe.id;
-          logger.info('[CAFE-SETTINGS] Using cafe slug to get cafe_id:', cafeId, 'slug:', cafeSlug);
+          logger.debug('[CAFE-SETTINGS] Using cafe slug to get cafe_id:', cafeId, 'slug:', cafeSlug);
         }
       } catch (error) {
         // Cafe might not exist, use null (will get default settings)
-        logger.info('[CAFE-SETTINGS] Cafe not found for slug:', cafeSlug);
+        logger.debug('[CAFE-SETTINGS] Cafe not found for slug:', cafeSlug);
       }
     }
     
-    logger.info('[CAFE-SETTINGS] Fetching settings', { cafeId, cafeSlug, hasToken: !!token });
+    logger.debug('[CAFE-SETTINGS] Fetching settings', { cafeId, cafeSlug, hasToken: !!token });
     const cafeSettings = await CafeSettings.getCurrent(cafeId);
-    logger.info('[CAFE-SETTINGS] Settings retrieved', { 
+    logger.debug('[CAFE-SETTINGS] Settings retrieved', { 
       requestedCafeId: cafeId, 
       settingsCafeId: cafeSettings.cafe_id,
       cafe_name: cafeSettings.cafe_name,

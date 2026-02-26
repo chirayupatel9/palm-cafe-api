@@ -1,7 +1,11 @@
 const Order = require('../models/order');
-const { getOrderCafeId, requireOrderCafeScope } = require('./helpers');
+const Cafe = require('../models/cafe');
+const MenuItem = require('../models/menuItem');
+const TaxSettings = require('../models/taxSettings');
+const { getOrderCafeId, requireOrderCafeScope, parseListLimitOffset, isInvalidCustomerPhone } = require('./helpers');
 const { auth, adminAuth, chefAuth } = require('../middleware/auth');
 const { requireActiveSubscription } = require('../middleware/subscriptionAuth');
+const { isMalformedString, validateRequiredString } = require('../middleware/validateInput');
 const logger = require('../config/logger');
 
 module.exports = function registerOrders(app) {
@@ -9,6 +13,8 @@ app.get('/api/orders', auth, requireActiveSubscription, requireOrderCafeScope, a
   try {
     const cafeId = getOrderCafeId(req);
     const { customer_phone, order_number } = req.query;
+    const { limit, offset } = parseListLimitOffset(req);
+    const listOptions = limit != null ? { limit, offset } : {};
 
     let orders;
     if (customer_phone && !isInvalidCustomerPhone(customer_phone)) {
@@ -16,7 +22,7 @@ app.get('/api/orders', auth, requireActiveSubscription, requireOrderCafeScope, a
     } else if (order_number && !isMalformedString(order_number)) {
       orders = await Order.getByOrderNumber(order_number, cafeId);
     } else {
-      orders = await Order.getAll(cafeId);
+      orders = await Order.getAll(cafeId, listOptions);
     }
     
     res.json(orders);

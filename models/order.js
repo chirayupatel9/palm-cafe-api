@@ -3,10 +3,15 @@ const CafeDailyMetrics = require('./cafeDailyMetrics');
 const logger = require('../config/logger');
 
 class Order {
-  // Get all orders (optionally scoped by cafeId for multi-cafe)
-  static async getAll(cafeId = null) {
+  // Get all orders (optionally scoped by cafeId for multi-cafe; optional limit/offset)
+  static async getAll(cafeId = null, options = {}) {
     try {
       const hasCafeId = cafeId != null;
+      const limit = options.limit != null && options.limit > 0 ? Math.min(options.limit, 100) : null;
+      const offset = options.offset != null && options.offset >= 0 ? options.offset : 0;
+      const params = hasCafeId ? [cafeId] : [];
+      if (limit != null) params.push(limit, offset);
+      const limitClause = limit != null ? ' LIMIT ? OFFSET ?' : '';
       const [rows] = await pool.execute(
         `SELECT 
           o.id,
@@ -48,8 +53,8 @@ class Order {
         LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
         ${hasCafeId ? 'WHERE o.cafe_id = ?' : ''}
         GROUP BY o.id
-        ORDER BY o.created_at DESC`,
-        hasCafeId ? [cafeId] : []
+        ORDER BY o.created_at DESC${limitClause}`,
+        params
       );
       
       const result = rows.map(order => {

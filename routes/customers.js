@@ -1,6 +1,6 @@
 const Customer = require('../models/customer');
 const Order = require('../models/order');
-const { getOrderCafeId, requireOrderCafeScope, isInvalidCustomerPhone } = require('./helpers');
+const { getOrderCafeId, requireOrderCafeScope, isInvalidCustomerPhone, parseListLimitOffset } = require('./helpers');
 const { auth, adminAuth } = require('../middleware/auth');
 const logger = require('../config/logger');
 
@@ -49,8 +49,10 @@ app.get('/api/customers', auth, async (req, res) => {
     if (req.user && req.user.role === 'superadmin' && req.query.cafeId) {
       cafeId = parseInt(req.query.cafeId, 10);
     }
-    
-    const customers = await Customer.getAll(cafeId);
+
+    const { limit, offset } = parseListLimitOffset(req);
+    const listOptions = limit != null ? { limit, offset } : {};
+    const customers = await Customer.getAll(cafeId, listOptions);
     res.json(customers);
   } catch (error) {
     logger.error('Error fetching customers:', error);

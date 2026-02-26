@@ -36,7 +36,7 @@ module.exports = function registerAuth(app) {
         token
       });
     } catch (error) {
-      logger.error('Registration error:', error);
+      logger.error('Registration error', { error: error.message, requestId: req.requestId });
       res.status(500).json({ error: 'Failed to register user' });
     }
   });
@@ -57,7 +57,7 @@ module.exports = function registerAuth(app) {
         user: { id: user.id, username: user.username, email: user.email, role: user.role }
       });
     } catch (error) {
-      logger.error('Admin registration error:', error);
+      logger.error('Admin registration error', { error: error.message, requestId: req.requestId });
       res.status(500).json({ error: 'Failed to register admin' });
     }
   });
@@ -78,7 +78,7 @@ module.exports = function registerAuth(app) {
         user: { id: user.id, username: user.username, email: user.email, role: user.role }
       });
     } catch (error) {
-      logger.error('Chef registration error:', error);
+      logger.error('Chef registration error', { error: error.message, requestId: req.requestId });
       res.status(500).json({ error: 'Failed to register chef' });
     }
   });
@@ -99,7 +99,7 @@ module.exports = function registerAuth(app) {
         user: { id: user.id, username: user.username, email: user.email, role: user.role }
       });
     } catch (error) {
-      logger.error('Reception registration error:', error);
+      logger.error('Reception registration error', { error: error.message, requestId: req.requestId });
       res.status(500).json({ error: 'Failed to register reception' });
     }
   });
@@ -124,7 +124,7 @@ module.exports = function registerAuth(app) {
         user: { id: user.id, username: user.username, email: user.email, role: user.role }
       });
     } catch (error) {
-      logger.error('Superadmin registration error:', error);
+      logger.error('Superadmin registration error', { error: error.message, requestId: req.requestId });
       res.status(500).json({ error: 'Failed to register superadmin' });
     }
   });
@@ -175,7 +175,7 @@ module.exports = function registerAuth(app) {
         token
       });
     } catch (error) {
-      logger.error('Login error:', error);
+      logger.error('Login error', { error: error.message, requestId: req.requestId });
       res.status(500).json({ error: 'Failed to login' });
     }
   });

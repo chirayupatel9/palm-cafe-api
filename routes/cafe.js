@@ -2,7 +2,7 @@ const Invoice = require('../models/invoice');
 const TaxSettings = require('../models/taxSettings');
 const { pool } = require('../config/database');
 const pdfService = require('../services/pdfService');
-const { getOrderCafeId, requireOrderCafeScope } = require('./helpers');
+const { getOrderCafeId, requireOrderCafeScope, parseListLimitOffset } = require('./helpers');
 const { auth } = require('../middleware/auth');
 const logger = require('../config/logger');
 
@@ -11,7 +11,9 @@ module.exports = function registerCafe(app) {
 app.get('/api/invoices', auth, requireOrderCafeScope, async (req, res) => {
   try {
     const cafeId = getOrderCafeId(req);
-    const invoices = await Invoice.getAll(cafeId);
+    const { limit, offset } = parseListLimitOffset(req);
+    const listOptions = limit != null ? { limit, offset } : {};
+    const invoices = await Invoice.getAll(cafeId, listOptions);
     res.json(invoices);
   } catch (error) {
     logger.error('Error fetching invoices:', error);

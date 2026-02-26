@@ -1,9 +1,11 @@
 const { pool } = require('../config/database');
 
 class Invoice {
-  // Get all invoices with items (optionally filtered by cafeId)
-  static async getAll(cafeId = null) {
+  // Get all invoices with items (optionally filtered by cafeId; optional limit/offset)
+  static async getAll(cafeId = null, options = {}) {
     try {
+      const limit = options.limit != null && options.limit > 0 ? Math.min(options.limit, 100) : null;
+      const offset = options.offset != null && options.offset >= 0 ? options.offset : 0;
       // Check which columns exist
       const [columns] = await pool.execute(`
         SELECT COLUMN_NAME 
@@ -96,6 +98,11 @@ class Invoice {
         query += ' ORDER BY i.date DESC';
       } else {
         query += ' ORDER BY i.created_at DESC';
+      }
+
+      if (limit != null) {
+        query += ' LIMIT ? OFFSET ?';
+        params.push(limit, offset);
       }
 
       const [invoices] = await pool.execute(query, params);

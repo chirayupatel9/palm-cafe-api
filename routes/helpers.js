@@ -101,7 +101,19 @@ function validateInventoryStrings(data) {
   return { valid: true };
 }
 
+const MAX_LIST_LIMIT = 100;
+
+function parseListLimitOffset(req) {
+  const limitRaw = parseInt(req.query.limit, 10);
+  const offsetRaw = parseInt(req.query.offset, 10);
+  const limit = Number.isNaN(limitRaw) || limitRaw < 1 ? null : Math.min(limitRaw, MAX_LIST_LIMIT);
+  const offset = Number.isNaN(offsetRaw) || offsetRaw < 0 ? 0 : offsetRaw;
+  return { limit, offset };
+}
+
 module.exports = {
+  MAX_LIST_LIMIT,
+  parseListLimitOffset,
   getOrderCafeId,
   getInventoryCafeId,
   requireOrderCafeScope,
