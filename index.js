@@ -10,6 +10,7 @@ const { generalLimiter } = require('./middleware/rateLimiter');
 const { validateProductionEnv } = require('./config/env');
 const requestIdMiddleware = require('./middleware/requestId');
 const responseHelpersMiddleware = require('./routes/responseHelpers');
+const requestDurationLogger = require('./middleware/requestDurationLogger');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -18,6 +19,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 // Request ID for tracing (before other middleware so all logs can use it)
 app.use(requestIdMiddleware);
 app.use(responseHelpersMiddleware);
+app.use(requestDurationLogger);
 
 // Middleware
 app.use(cors({
@@ -171,4 +173,8 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-startServer(); 
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = app;

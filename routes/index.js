@@ -11,6 +11,7 @@ function registerRoutes(app) {
   require('./orders')(app);
   require('./customers')(app);
   require('./health')(app);
+  require('./metrics')(app);
   require('./paymentMethods')(app);
 }
 
