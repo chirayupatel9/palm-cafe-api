@@ -1,11 +1,13 @@
 const Order = require('../models/order');
+const Customer = require('../models/customer');
 const Cafe = require('../models/cafe');
 const MenuItem = require('../models/menuItem');
 const TaxSettings = require('../models/taxSettings');
+const { pool } = require('../config/database');
 const { getOrderCafeId, requireOrderCafeScope, parseListLimitOffset, isInvalidCustomerPhone } = require('./helpers');
 const { auth, adminAuth, chefAuth } = require('../middleware/auth');
 const { requireActiveSubscription } = require('../middleware/subscriptionAuth');
-const { isMalformedString, validateRequiredString } = require('../middleware/validateInput');
+const { isMalformedString, validateRequiredString, sanitizeString } = require('../middleware/validateInput');
 const logger = require('../config/logger');
 
 module.exports = function registerOrders(app) {
@@ -66,16 +68,26 @@ app.post('/api/customer/orders', async (req, res) => {
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'At least one order item is required' });
     }
+    const hasInvalidItem = items.some(item => item.id == null && item.menu_item_id == null);
+    if (hasInvalidItem) {
+      return res.status(400).json({ error: 'Each order item must have an id' });
+    }
 
     if (isInvalidCustomerPhone(customerPhone)) {
       customerPhone = null;
     }
 
-    // Calculate subtotal
-    const subtotal = items.reduce((sum, item) => sum + (parseFloat(item.price) * item.quantity), 0);
+    // Calculate subtotal (guard against NaN)
+    const subtotal = items.reduce((sum, item) => sum + (Number(item.price) || 0) * (Number(item.quantity) || 0), 0);
+    if (Number.isNaN(subtotal) || subtotal < 0) {
+      return res.status(400).json({ error: 'Invalid item prices or quantities' });
+    }
     const cafeSlug = req.query.cafeSlug || req.body.cafeSlug || 'default';
 
-    const cafe = await Cafe.getBySlug(cafeSlug);
+    let cafe = await Cafe.getBySlug(cafeSlug);
+    if (!cafe) {
+      cafe = await Cafe.getFirstActive();
+    }
     const cafeIdForTax = cafe ? cafe.id : null;
     const taxCalculation = await TaxSettings.calculateTax(subtotal, cafeIdForTax);
 
@@ -95,7 +107,7 @@ app.post('/api/customer/orders', async (req, res) => {
     // Check if customer exists or create new one (scoped to this cafe)
     let customer = null;
     if (customerPhone || customerName) {
-      customer = await Customer.findByEmailOrPhone(customerName, customerPhone, cafeId);
+      customer = await Customer.findByEmailOrPhone(customerEmail || null, customerPhone || null, cafeId);
       
       if (!customer && customerPhone) {
         // Create new customer if phone number provided
@@ -119,11 +131,11 @@ app.post('/api/customer/orders', async (req, res) => {
       customer_phone: customerPhone,
       table_number: tableNumber || null,
       items: items.map(item => ({
-        menu_item_id: item.id,
-        name: item.name,
-        quantity: item.quantity,
-        price: parseFloat(item.price),
-        total: parseFloat(item.price) * item.quantity
+        menu_item_id: item.id != null ? item.id : item.menu_item_id,
+        name: item.name || 'Item',
+        quantity: Number(item.quantity) || 1,
+        price: Number(item.price) || 0,
+        total: (Number(item.price) || 0) * (Number(item.quantity) || 1)
       })),
       total_amount: subtotal,
       tax_amount: taxCalculation.taxAmount,
@@ -164,8 +176,13 @@ app.post('/api/customer/orders', async (req, res) => {
       status: 'pending'
     });
   } catch (error) {
-    logger.error('Error creating customer order:', error);
-    res.status(500).json({ error: 'Failed to create order' });
+    logger.error('Error creating customer order:', { message: error.message, stack: error.stack });
+    const isProd = process.env.NODE_ENV === 'production';
+    const errorMessage = (error && error.message) ? String(error.message) : 'Failed to create order';
+    res.status(500).json({
+      error: isProd ? 'Failed to create order' : errorMessage,
+      code: 'ORDER_CREATE_FAILED'
+    });
   }
 });
 

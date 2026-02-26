@@ -1,4 +1,7 @@
 const Invoice = require('../models/invoice');
+const Order = require('../models/order');
+const Customer = require('../models/customer');
+const Cafe = require('../models/cafe');
 const TaxSettings = require('../models/taxSettings');
 const { pool } = require('../config/database');
 const pdfService = require('../services/pdfService');
@@ -74,7 +77,7 @@ app.post('/api/invoices', auth, async (req, res) => {
     // Check if customer exists or create new one (scoped to this cafe)
     let customer = null;
     if (customerPhone || customerName) {
-      customer = await Customer.findByEmailOrPhone(customerName, customerPhone, cafeId);
+      customer = await Customer.findByEmailOrPhone(customerEmail || null, customerPhone || null, cafeId);
       
       if (!customer && customerPhone) {
         // Create new customer if phone number provided
