@@ -8,10 +8,16 @@ const { initializeDatabase, testConnection } = require('./config/database');
 const logger = require('./config/logger');
 const { generalLimiter } = require('./middleware/rateLimiter');
 const { validateProductionEnv } = require('./config/env');
+const requestIdMiddleware = require('./middleware/requestId');
+const responseHelpersMiddleware = require('./routes/responseHelpers');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';
+
+// Request ID for tracing (before other middleware so all logs can use it)
+app.use(requestIdMiddleware);
+app.use(responseHelpersMiddleware);
 
 // Middleware
 app.use(cors({
@@ -54,7 +60,7 @@ app.use(morgan('combined', { stream: logger.stream }));
 app.use((req, res, next) => {
   if (process.env.NODE_ENV === 'development') {
     const origin = req.headers.origin || 'No origin';
-    logger.debug(`${req.method} ${req.path}`, { origin });
+    logger.debug(`${req.method} ${req.path}`, { origin, requestId: req.requestId });
   }
   next();
 });
@@ -71,24 +77,32 @@ registerRoutes(app);
 // Global error handler middleware (must be last)
 app.use((err, req, res, next) => {
   const status = err.statusCode || err.status || 500;
+  const requestId = req.requestId || null;
   logger.error('Unhandled error', {
     message: err.message,
     stack: err.stack,
     path: req.path,
     method: req.method,
-    ip: req.ip
+    ip: req.ip,
+    requestId
   });
 
   const isProduction = process.env.NODE_ENV === 'production';
-  res.status(status).json({
-    error: isProduction ? 'Internal server error' : (err.message || 'Internal server error')
-  });
+  const body = {
+    error: isProduction ? 'Internal server error' : (err.message || 'Internal server error'),
+    code: 'INTERNAL_ERROR'
+  };
+  if (requestId) body.requestId = requestId;
+  res.status(status).json(body);
 });
 
 // 404 handler for undefined routes
 app.use((req, res) => {
-  logger.warn(`404 - Route not found: ${req.method} ${req.path}`);
-  res.status(404).json({ error: 'Route not found' });
+  const requestId = req.requestId || null;
+  logger.warn(`404 - Route not found: ${req.method} ${req.path}`, { requestId });
+  const body = { error: 'Route not found', code: 'NOT_FOUND' };
+  if (requestId) body.requestId = requestId;
+  res.status(404).json(body);
 });
 
 // Initialize database and start server

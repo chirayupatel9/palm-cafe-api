@@ -2,21 +2,14 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/user');
 const { auth, chefAuth, JWT_SECRET } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimiter');
+const { registerValidation, loginValidation, handleValidationErrors } = require('../middleware/validateAuth');
 const logger = require('../config/logger');
 
 module.exports = function registerAuth(app) {
   // Register new user
-  app.post('/api/auth/register', authLimiter, async (req, res) => {
+  app.post('/api/auth/register', authLimiter, registerValidation, handleValidationErrors, async (req, res) => {
     try {
       const { username, email, password } = req.body;
-
-      if (!username || !email || !password) {
-        return res.status(400).json({ error: 'All fields are required' });
-      }
-
-      if (password.length < 6) {
-        return res.status(400).json({ error: 'Password must be at least 6 characters long' });
-      }
 
       const existingUser = await User.findByEmail(email);
       if (existingUser) {
@@ -48,17 +41,9 @@ module.exports = function registerAuth(app) {
     }
   });
 
-  app.post('/api/auth/register-admin', auth, async (req, res) => {
+  app.post('/api/auth/register-admin', auth, registerValidation, handleValidationErrors, async (req, res) => {
     try {
       const { username, email, password } = req.body;
-
-      if (!username || !email || !password) {
-        return res.status(400).json({ error: 'All fields are required' });
-      }
-
-      if (password.length < 6) {
-        return res.status(400).json({ error: 'Password must be at least 6 characters long' });
-      }
 
       const existingUser = await User.findByEmail(email);
       if (existingUser) {
@@ -77,17 +62,9 @@ module.exports = function registerAuth(app) {
     }
   });
 
-  app.post('/api/auth/register-chef', chefAuth, async (req, res) => {
+  app.post('/api/auth/register-chef', chefAuth, registerValidation, handleValidationErrors, async (req, res) => {
     try {
       const { username, email, password } = req.body;
-
-      if (!username || !email || !password) {
-        return res.status(400).json({ error: 'All fields are required' });
-      }
-
-      if (password.length < 6) {
-        return res.status(400).json({ error: 'Password must be at least 6 characters long' });
-      }
 
       const existingUser = await User.findByEmail(email);
       if (existingUser) {
@@ -106,17 +83,9 @@ module.exports = function registerAuth(app) {
     }
   });
 
-  app.post('/api/auth/register-reception', chefAuth, async (req, res) => {
+  app.post('/api/auth/register-reception', chefAuth, registerValidation, handleValidationErrors, async (req, res) => {
     try {
       const { username, email, password } = req.body;
-
-      if (!username || !email || !password) {
-        return res.status(400).json({ error: 'All fields are required' });
-      }
-
-      if (password.length < 6) {
-        return res.status(400).json({ error: 'Password must be at least 6 characters long' });
-      }
 
       const existingUser = await User.findByEmail(email);
       if (existingUser) {
@@ -135,21 +104,13 @@ module.exports = function registerAuth(app) {
     }
   });
 
-  app.post('/api/auth/register-superadmin', auth, async (req, res) => {
+  app.post('/api/auth/register-superadmin', auth, registerValidation, handleValidationErrors, async (req, res) => {
     try {
       if (req.user.role !== 'superadmin') {
         return res.status(403).json({ error: 'Only superadmins can register new superadmins' });
       }
 
       const { username, email, password } = req.body;
-
-      if (!username || !email || !password) {
-        return res.status(400).json({ error: 'All fields are required' });
-      }
-
-      if (password.length < 6) {
-        return res.status(400).json({ error: 'Password must be at least 6 characters long' });
-      }
 
       const existingUser = await User.findByEmail(email);
       if (existingUser) {
@@ -170,13 +131,9 @@ module.exports = function registerAuth(app) {
 
   // Login, profile, server time, cors-test are registered after superadmin in main index order;
   // we register them here in auth.js so all auth-related routes live together
-  app.post('/api/auth/login', authLimiter, async (req, res) => {
+  app.post('/api/auth/login', authLimiter, loginValidation, handleValidationErrors, async (req, res) => {
     try {
       const { email, password } = req.body;
-
-      if (!email || !password) {
-        return res.status(400).json({ error: 'Email and password are required' });
-      }
 
       const user = await User.findByIdWithCafe((await User.findByEmail(email))?.id);
       if (!user) {

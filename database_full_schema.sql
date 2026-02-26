@@ -197,6 +197,10 @@ CREATE TABLE IF NOT EXISTS `invoices` (
 
 -- -----------------------------------------------------------------------------
 -- Invoice items
+-- NOTE: menu_item_id is VARCHAR(36) for legacy compatibility (no FK to menu_items).
+-- order_items.menu_item_id is INT and references menu_items(id). To align types
+-- and add FK on invoice_items, run a migration that alters menu_item_id to INT
+-- after ensuring existing values are numeric or migrated.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `invoice_items` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
