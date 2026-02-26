@@ -1,17 +1,17 @@
 const rateLimit = require('express-rate-limit');
+const logger = require('../config/logger');
 
-// General rate limiter for all routes
 const generalLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 10000, // limit each IP to 100 requests per windowMs
+  windowMs: 5 * 60 * 1000,
+  max: 10000,
   message: {
     error: 'Too many requests from this IP, please try again later.',
-    retryAfter: 900 // 15 minutes in seconds
+    retryAfter: 900
   },
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  standardHeaders: true,
+  legacyHeaders: false,
   handler: (req, res) => {
-    console.warn(`Rate limit exceeded for IP: ${req.ip}`);
+    logger.warn('Rate limit exceeded', { ip: req.ip });
     res.status(429).json({
       error: 'Too many requests from this IP, please try again later.',
       retryAfter: 900
@@ -30,7 +30,7 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
-    console.warn(`Auth rate limit exceeded for IP: ${req.ip}`);
+    logger.warn('Auth rate limit exceeded', { ip: req.ip });
     res.status(429).json({
       error: 'Too many authentication attempts, please try again later.',
       retryAfter: 900
@@ -49,7 +49,7 @@ const uploadLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
-    console.warn(`Upload rate limit exceeded for IP: ${req.ip}`);
+    logger.warn('Upload rate limit exceeded', { ip: req.ip });
     res.status(429).json({
       error: 'Too many file uploads, please try again later.',
       retryAfter: 3600
@@ -68,7 +68,7 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
-    console.warn(`API rate limit exceeded for IP: ${req.ip}`);
+    logger.warn('API rate limit exceeded', { ip: req.ip });
     res.status(429).json({
       error: 'Too many API requests, please try again later.',
       retryAfter: 900

@@ -1,5 +1,6 @@
 const { pool } = require('../config/database');
 const CafeDailyMetrics = require('./cafeDailyMetrics');
+const logger = require('../config/logger');
 
 class Order {
   // Get all orders (optionally scoped by cafeId for multi-cafe)
@@ -91,7 +92,7 @@ class Order {
       
       return result;
     } catch (error) {
-      console.error('Error in getAll:', error);
+      logger.error('Error in getAll:', error);
       throw new Error(`Error fetching orders: ${error.message}`);
     }
   }
@@ -297,14 +298,14 @@ class Order {
         const orderDate = new Date(result.created_at).toISOString().split('T')[0];
         CafeDailyMetrics.incrementOrder(cafeId, orderDate, parseFloat(safeFinalAmount || 0), false)
           .catch(err => {
-            console.error('Error updating analytics metrics:', err);
+            logger.error('Error updating analytics metrics:', err);
             // Don't throw - aggregation failures shouldn't break order creation
           });
       }
       
       return result;
     } catch (error) {
-      console.error('Error creating order:', error);
+      logger.error('Error creating order:', error);
       await connection.rollback();
       throw new Error(`Error creating order: ${error.message}`);
     } finally {
@@ -347,7 +348,7 @@ class Order {
           // Status changed to/from completed - update metrics
           CafeDailyMetrics.updateOrderCompletion(orderCafeId, orderDate, finalAmount, isNowCompleted)
             .catch(err => {
-              console.error('Error updating analytics metrics:', err);
+              logger.error('Error updating analytics metrics:', err);
               // Don't throw - aggregation failures shouldn't break order updates
             });
         }
@@ -456,7 +457,7 @@ class Order {
       const result = await this.getById(id, cafeId);
       return result;
     } catch (error) {
-      console.error('Error updating order:', error);
+      logger.error('Error updating order:', error);
       await connection.rollback();
       throw new Error(`Error updating order: ${error.message}`);
     } finally {

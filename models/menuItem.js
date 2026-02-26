@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const logger = require('../config/logger');
 
 class MenuItem {
   // Get all menu items with category information (filtered by cafeId)
@@ -497,7 +498,7 @@ class MenuItem {
           
           const [result] = await connection.execute(query, params);
           
-          console.log('[BULK IMPORT] Item inserted successfully', {
+          logger.debug('Bulk import item inserted', {
             insertId: result.insertId,
             name: item.name,
             category_id: item.category_id,
@@ -506,7 +507,7 @@ class MenuItem {
           
           results.push({ success: true, item: { ...item, insertId: result.insertId } });
         } catch (error) {
-          console.error('[BULK IMPORT] Failed to insert item', {
+          logger.error('Bulk import failed to insert item', {
             name: item.name,
             category_id: item.category_id,
             cafe_id: item.cafe_id,
@@ -518,7 +519,7 @@ class MenuItem {
       }
       
       await connection.commit();
-      console.log('[BULK IMPORT] Transaction committed', {
+      logger.debug('Bulk import transaction committed', {
         totalItems: items.length,
         successCount: results.filter(r => r.success).length,
         failureCount: results.filter(r => !r.success).length
@@ -526,7 +527,7 @@ class MenuItem {
       return results;
     } catch (error) {
       await connection.rollback();
-      console.error('[BULK IMPORT] Transaction rolled back', {
+      logger.error('Bulk import transaction rolled back', {
         error: error.message,
         stack: error.stack
       });
