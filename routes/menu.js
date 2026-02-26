@@ -294,7 +294,14 @@ app.get('/api/menu', async (req, res) => {
           cafeId = cafe.id;
         }
       } catch (error) {
-        // Cafe might not exist, use null (will get all items if no cafe_id column)
+        // Cafe table might not exist yet or getBySlug failed; fallback below
+      }
+      // Fallback: use first active cafe when cafe_id column exists (avoids "cafeId is required" error)
+      if (!cafeId) {
+        const firstCafe = await Cafe.getFirstActive();
+        if (firstCafe) {
+          cafeId = firstCafe.id;
+        }
       }
     }
     
@@ -303,6 +310,13 @@ app.get('/api/menu', async (req, res) => {
       hasToken: !!token,
       cafeSlug: req.query.cafeSlug
     });
+    
+    if (!cafeId) {
+      return res.status(400).json({
+        error: 'Cafe context required. Provide ?cafeSlug= or log in with a cafe account.',
+        code: 'CAFE_REQUIRED'
+      });
+    }
     
     const menuItems = await MenuItem.getAll(cafeId);
     
