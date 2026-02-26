@@ -5450,18 +5450,20 @@ app.get('/api/invoices', auth, requireOrderCafeScope, async (req, res) => {
 // Create new invoice
 app.post('/api/invoices', auth, async (req, res) => {
   try {
-    const { customerName, customerPhone, customerEmail, tableNumber, paymentMethod, items, tipAmount, pointsRedeemed, date, splitPayment, splitPaymentMethod, splitAmount, extraCharge, extraChargeNote } = req.body;
-    
+    const { customerName, customerPhone, customerEmail, tableNumber, paymentMethod, items, tipAmount, pointsRedeemed, date, splitPayment, splitPaymentMethod, splitAmount, extraCharge, extraChargeNote, wantInvoice } = req.body;
+
+    const generateInvoice = wantInvoice !== false;
+
     if (!customerName || !items || items.length === 0) {
       return res.status(400).json({ error: 'Customer name and items are required' });
     }
 
-    const cafeId = getOrderCafeId(req);
+    let cafeId = getOrderCafeId(req);
     if (!cafeId) {
       return res.status(400).json({ error: 'Unable to determine cafe. Please ensure you are logged in and belong to a cafe.' });
     }
 
-    const invoiceNumber = await Invoice.getNextInvoiceNumber();
+    const invoiceNumber = generateInvoice ? await Invoice.getNextInvoiceNumber() : null;
 
     // Calculate subtotal
     const subtotal = items.reduce((sum, item) => sum + (parseFloat(item.price) * item.quantity), 0);
@@ -5572,34 +5574,35 @@ app.post('/api/invoices', auth, async (req, res) => {
       }
     }
 
-    const invoiceData = {
-      invoiceNumber,
-      order_id: createdOrder.id,
-      customerName,
-      customerPhone,
-      paymentMethod: paymentMethod || 'cash',
-      splitPayment: splitPaymentEnabled,
-      splitPaymentMethod: splitPaymentMethodStr,
-      splitAmount: splitAmountNum,
-      items,
-      subtotal,
-      taxAmount: taxCalculation.taxAmount,
-      tipAmount: tipAmountNum,
-      total,
-      date: date || new Date().toISOString(),
-      cafe_id: cafeId
-    };
-
-    const createdInvoice = await Invoice.create(invoiceData);
+    if (generateInvoice) {
+      const invoiceData = {
+        invoiceNumber,
+        order_id: createdOrder.id,
+        customerName,
+        customerPhone,
+        paymentMethod: paymentMethod || 'cash',
+        splitPayment: splitPaymentEnabled,
+        splitPaymentMethod: splitPaymentMethodStr,
+        splitAmount: splitAmountNum,
+        items,
+        subtotal,
+        taxAmount: taxCalculation.taxAmount,
+        tipAmount: tipAmountNum,
+        total,
+        date: date || new Date().toISOString(),
+        cafe_id: cafeId
+      };
+      await Invoice.create(invoiceData);
+    }
 
     res.json({
-      invoiceNumber,
+      invoiceNumber: generateInvoice ? invoiceNumber : null,
       orderNumber: createdOrder.order_number,
-      taxInfo: {
+      taxInfo: generateInvoice ? {
         taxRate: taxCalculation.taxRate,
         taxName: taxCalculation.taxName,
         taxAmount: taxCalculation.taxAmount
-      }
+      } : undefined
     });
   } catch (error) {
     console.error('Error creating invoice:', error);
