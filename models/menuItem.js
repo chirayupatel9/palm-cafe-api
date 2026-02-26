@@ -251,8 +251,8 @@ class MenuItem {
     }
   }
 
-  // Update menu item
-  static async update(id, menuItemData) {
+  // Update menu item (optional cafeId scopes update to that cafe only)
+  static async update(id, menuItemData, cafeId = null) {
     try {
       const { category_id, name, description, price, sort_order, is_available, image_url, featured_priority } = menuItemData;
       
@@ -260,7 +260,6 @@ class MenuItem {
         throw new Error('Category ID is required');
       }
       
-      // Handle undefined values by converting them to null or default values
       const safeCategoryId = category_id || null;
       const safeName = name ? name.trim() : '';
       const safeDescription = description ? description.trim() : '';
@@ -268,56 +267,62 @@ class MenuItem {
       const safeSortOrder = sort_order || 0;
       const safeIsAvailable = is_available !== undefined ? is_available : true;
       const safeImageUrl = image_url || null;
-      const safeFeaturedPriority = featured_priority !== undefined && featured_priority !== null && featured_priority !== '' 
-        ? parseInt(featured_priority) 
+      const safeFeaturedPriority = featured_priority !== undefined && featured_priority !== null && featured_priority !== ''
+        ? parseInt(featured_priority)
         : null;
-      
-      // Check if featured_priority column exists
-      const [columns] = await pool.execute(`
-        SELECT COLUMN_NAME 
-        FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_SCHEMA = DATABASE() 
-        AND TABLE_NAME = 'menu_items' 
-        AND COLUMN_NAME = 'featured_priority'
+
+      const [featuredCol] = await pool.execute(`
+        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'menu_items' AND COLUMN_NAME = 'featured_priority'
       `);
-      
-      const hasFeaturedPriority = columns.length > 0;
-      
-      if (hasFeaturedPriority) {
-        const [result] = await pool.execute(
-          'UPDATE menu_items SET category_id = ?, name = ?, description = ?, price = ?, sort_order = ?, is_available = ?, image_url = ?, featured_priority = ? WHERE id = ?',
-          [safeCategoryId, safeName, safeDescription, safePrice, safeSortOrder, safeIsAvailable, safeImageUrl, safeFeaturedPriority, id]
-        );
-        
-        if (result.affectedRows === 0) {
-          throw new Error('Menu item not found');
-        }
-      } else {
-        const [result] = await pool.execute(
-          'UPDATE menu_items SET category_id = ?, name = ?, description = ?, price = ?, sort_order = ?, is_available = ?, image_url = ? WHERE id = ?',
-          [safeCategoryId, safeName, safeDescription, safePrice, safeSortOrder, safeIsAvailable, safeImageUrl, id]
-        );
-        
-        if (result.affectedRows === 0) {
-          throw new Error('Menu item not found');
-        }
+      const hasFeaturedPriority = featuredCol.length > 0;
+
+      const [cafeCol] = await pool.execute(`
+        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'menu_items' AND COLUMN_NAME = 'cafe_id'
+      `);
+      const hasCafeId = cafeCol.length > 0;
+      const scopeByCafe = hasCafeId && cafeId != null;
+
+      const whereClause = scopeByCafe ? ' WHERE id = ? AND cafe_id = ?' : ' WHERE id = ?';
+      const params = hasFeaturedPriority
+        ? [safeCategoryId, safeName, safeDescription, safePrice, safeSortOrder, safeIsAvailable, safeImageUrl, safeFeaturedPriority, id]
+        : [safeCategoryId, safeName, safeDescription, safePrice, safeSortOrder, safeIsAvailable, safeImageUrl, id];
+      if (scopeByCafe) params.push(cafeId);
+
+      const setClause = hasFeaturedPriority
+        ? 'UPDATE menu_items SET category_id = ?, name = ?, description = ?, price = ?, sort_order = ?, is_available = ?, image_url = ?, featured_priority = ?'
+        : 'UPDATE menu_items SET category_id = ?, name = ?, description = ?, price = ?, sort_order = ?, is_available = ?, image_url = ?';
+      const [result] = await pool.execute(setClause + whereClause, params);
+
+      if (result.affectedRows === 0) {
+        throw new Error('Menu item not found');
       }
-      
       return await this.getById(id);
     } catch (error) {
       throw new Error(`Error updating menu item: ${error.message}`);
     }
   }
 
-  // Delete menu item
-  static async delete(id) {
+  // Delete menu item (optional cafeId scopes delete to that cafe only)
+  static async delete(id, cafeId = null) {
     try {
-      const [result] = await pool.execute('DELETE FROM menu_items WHERE id = ?', [id]);
-      
+      let sql = 'DELETE FROM menu_items WHERE id = ?';
+      const params = [id];
+      if (cafeId != null) {
+        const [cafeCol] = await pool.execute(`
+          SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'menu_items' AND COLUMN_NAME = 'cafe_id'
+        `);
+        if (cafeCol.length > 0) {
+          sql += ' AND cafe_id = ?';
+          params.push(cafeId);
+        }
+      }
+      const [result] = await pool.execute(sql, params);
       if (result.affectedRows === 0) {
         throw new Error('Menu item not found');
       }
-      
       return { success: true };
     } catch (error) {
       throw new Error(`Error deleting menu item: ${error.message}`);

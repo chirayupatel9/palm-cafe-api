@@ -1,12 +1,10 @@
+require('dotenv').config();
 const jwt = require('jsonwebtoken');
 const User = require('../models/user');
+const { requireEnv } = require('../config/env');
 
-const JWT_SECRET = process.env.JWT_SECRET || (() => {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('JWT_SECRET must be set in production environment');
-  }
-  return 'your-secret-key-change-in-production';
-})();
+const raw = requireEnv('JWT_SECRET');
+const JWT_SECRET = (raw && String(raw).trim()) ? raw : (process.env.NODE_ENV === 'production' ? (() => { throw new Error('JWT_SECRET must be set in production'); })() : 'dev-secret-change-in-production');
 
 const auth = async (req, res, next) => {
   try {
@@ -75,33 +73,26 @@ const auth = async (req, res, next) => {
 
     next();
   } catch (error) {
-    console.error('JWT verification error:', error.message);
-    console.error('Error details:', {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-      token: token ? `${token.substring(0, 20)}...` : 'no token'
-    });
+    // Log server-side only; do not log token or error message to client
+    const logger = require('../config/logger');
+    logger.warn('JWT verification failed', { name: error.name });
     
     if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ 
+      return res.status(401).json({
         error: 'Token has expired. Please log in again.',
-        code: 'TOKEN_EXPIRED',
-        details: error.message
-      });
-    } else if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ 
-        error: 'Invalid token format.',
-        code: 'INVALID_TOKEN',
-        details: error.message
-      });
-    } else {
-      return res.status(401).json({ 
-        error: 'Token verification failed.',
-        code: 'VERIFICATION_FAILED',
-        details: error.message
+        code: 'TOKEN_EXPIRED'
       });
     }
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({
+        error: 'Invalid token.',
+        code: 'INVALID_TOKEN'
+      });
+    }
+    return res.status(401).json({
+      error: 'Authentication failed.',
+      code: 'VERIFICATION_FAILED'
+    });
   }
 };
 
@@ -114,7 +105,7 @@ const adminAuth = async (req, res, next) => {
       next();
     });
   } catch (error) {
-    res.status(401).json({ error: 'Invalid token.' });
+    return res.status(401).json({ error: 'Invalid token.' });
   }
 };
 
@@ -127,7 +118,7 @@ const chefAuth = async (req, res, next) => {
       next();
     });
   } catch (error) {
-    res.status(401).json({ error: 'Invalid token.' });
+    return res.status(401).json({ error: 'Invalid token.' });
   }
 };
 

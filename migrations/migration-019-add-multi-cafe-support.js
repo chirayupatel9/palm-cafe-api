@@ -89,8 +89,9 @@ async function migrateMultiCafeSupport() {
         ALTER TABLE users 
         ADD CONSTRAINT fk_users_cafe 
         FOREIGN KEY (cafe_id) REFERENCES cafes(id) ON DELETE RESTRICT
-      `).catch(() => {
-        // Foreign key might already exist
+      `).catch((err) => {
+        console.error('Migration 019: fk_users_cafe failed', err.message);
+        throw err;
       });
     }
     
@@ -124,7 +125,10 @@ async function migrateMultiCafeSupport() {
         ALTER TABLE menu_items 
         ADD CONSTRAINT fk_menu_items_cafe 
         FOREIGN KEY (cafe_id) REFERENCES cafes(id) ON DELETE RESTRICT
-      `).catch(() => {});
+      `).catch((err) => {
+        console.error('Migration 019: fk_menu_items_cafe failed', err.message);
+        throw err;
+      });
     }
     
     await connection.execute(`
@@ -156,7 +160,10 @@ async function migrateMultiCafeSupport() {
         ALTER TABLE categories 
         ADD CONSTRAINT fk_categories_cafe 
         FOREIGN KEY (cafe_id) REFERENCES cafes(id) ON DELETE RESTRICT
-      `).catch(() => {});
+      `).catch((err) => {
+        console.error('Migration 019: fk_categories_cafe failed', err.message);
+        throw err;
+      });
     }
     
     await connection.execute(`
@@ -188,7 +195,10 @@ async function migrateMultiCafeSupport() {
         ALTER TABLE orders 
         ADD CONSTRAINT fk_orders_cafe 
         FOREIGN KEY (cafe_id) REFERENCES cafes(id) ON DELETE RESTRICT
-      `).catch(() => {});
+      `).catch((err) => {
+        console.error('Migration 019: fk_orders_cafe failed', err.message);
+        throw err;
+      });
     }
     
     await connection.execute(`
@@ -220,7 +230,10 @@ async function migrateMultiCafeSupport() {
         ALTER TABLE invoices 
         ADD CONSTRAINT fk_invoices_cafe 
         FOREIGN KEY (cafe_id) REFERENCES cafes(id) ON DELETE RESTRICT
-      `).catch(() => {});
+      `).catch((err) => {
+        console.error('Migration 019: fk_invoices_cafe failed', err.message);
+        throw err;
+      });
     }
     
     await connection.execute(`
@@ -252,7 +265,10 @@ async function migrateMultiCafeSupport() {
         ALTER TABLE customers 
         ADD CONSTRAINT fk_customers_cafe 
         FOREIGN KEY (cafe_id) REFERENCES cafes(id) ON DELETE RESTRICT
-      `).catch(() => {});
+      `).catch((err) => {
+        console.error('Migration 019: fk_customers_cafe failed', err.message);
+        throw err;
+      });
     }
     
     await connection.execute(`
@@ -293,7 +309,10 @@ async function migrateMultiCafeSupport() {
             ALTER TABLE inventory 
             ADD CONSTRAINT fk_inventory_cafe 
             FOREIGN KEY (cafe_id) REFERENCES cafes(id) ON DELETE RESTRICT
-          `).catch(() => {});
+          `).catch((err) => {
+            console.error('Migration 019: fk_inventory_cafe failed', err.message);
+            throw err;
+          });
         }
         
         await connection.execute(`
@@ -338,7 +357,10 @@ async function migrateMultiCafeSupport() {
             ALTER TABLE cafe_settings 
             ADD CONSTRAINT fk_cafe_settings_cafe 
             FOREIGN KEY (cafe_id) REFERENCES cafes(id) ON DELETE RESTRICT
-          `).catch(() => {});
+          `).catch((err) => {
+            console.error('Migration 019: fk_cafe_settings_cafe failed', err.message);
+            throw err;
+          });
         }
         
         await connection.execute(`
@@ -383,7 +405,10 @@ async function migrateMultiCafeSupport() {
             ALTER TABLE payment_methods 
             ADD CONSTRAINT fk_payment_methods_cafe 
             FOREIGN KEY (cafe_id) REFERENCES cafes(id) ON DELETE RESTRICT
-          `).catch(() => {});
+          `).catch((err) => {
+            console.error('Migration 019: fk_payment_methods_cafe failed', err.message);
+            throw err;
+          });
         }
         
         await connection.execute(`
@@ -428,7 +453,10 @@ async function migrateMultiCafeSupport() {
             ALTER TABLE tax_settings 
             ADD CONSTRAINT fk_tax_settings_cafe 
             FOREIGN KEY (cafe_id) REFERENCES cafes(id) ON DELETE RESTRICT
-          `).catch(() => {});
+          `).catch((err) => {
+            console.error('Migration 019: fk_tax_settings_cafe failed', err.message);
+            throw err;
+          });
         }
         
         await connection.execute(`
@@ -473,7 +501,10 @@ async function migrateMultiCafeSupport() {
             ALTER TABLE currency_settings 
             ADD CONSTRAINT fk_currency_settings_cafe 
             FOREIGN KEY (cafe_id) REFERENCES cafes(id) ON DELETE RESTRICT
-          `).catch(() => {});
+          `).catch((err) => {
+            console.error('Migration 019: fk_currency_settings_cafe failed', err.message);
+            throw err;
+          });
         }
         
         await connection.execute(`

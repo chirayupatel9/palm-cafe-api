@@ -44,12 +44,9 @@ async function addPrinterSettingsMigration() {
   }
 }
 
-addPrinterSettingsMigration()
-  .then(() => {
-    console.log('🎉 Printer settings migration finished');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('💥 Printer settings migration failed:', error);
-    process.exit(1);
-  }); 
+if (require.main === module) {
+  addPrinterSettingsMigration()
+    .then(() => { console.log('🎉 Printer settings migration finished'); process.exit(0); })
+    .catch((error) => { console.error('💥 Printer settings migration failed:', error); process.exit(1); });
+}
+module.exports = addPrinterSettingsMigration; 

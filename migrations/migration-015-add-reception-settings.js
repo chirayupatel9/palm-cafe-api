@@ -46,12 +46,9 @@ async function addReceptionSettingsMigration() {
   }
 }
 
-addReceptionSettingsMigration()
-  .then(() => {
-    console.log('🎉 Reception settings migration finished');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('💥 Reception settings migration failed:', error);
-    process.exit(1);
-  }); 
+if (require.main === module) {
+  addReceptionSettingsMigration()
+    .then(() => { console.log('🎉 Reception settings migration finished'); process.exit(0); })
+    .catch((error) => { console.error('💥 Reception settings migration failed:', error); process.exit(1); });
+}
+module.exports = addReceptionSettingsMigration; 

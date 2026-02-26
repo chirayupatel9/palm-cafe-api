@@ -44,12 +44,9 @@ async function addChefVisibilityMigration() {
   }
 }
 
-addChefVisibilityMigration()
-  .then(() => {
-    console.log('🎉 Chef visibility migration finished');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('💥 Chef visibility migration failed:', error);
-    process.exit(1);
-  }); 
+if (require.main === module) {
+  addChefVisibilityMigration()
+    .then(() => { console.log('🎉 Chef visibility migration finished'); process.exit(0); })
+    .catch((error) => { console.error('💥 Chef visibility migration failed:', error); process.exit(1); });
+}
+module.exports = addChefVisibilityMigration; 

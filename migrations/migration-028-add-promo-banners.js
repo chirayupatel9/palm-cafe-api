@@ -43,12 +43,9 @@ async function addPromoBannersMigration() {
   }
 }
 
-addPromoBannersMigration()
-  .then(() => {
-    console.log('Promo banners migration finished');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('Promo banners migration failed:', error);
-    process.exit(1);
-  });
+if (require.main === module) {
+  addPromoBannersMigration()
+    .then(() => { console.log('Promo banners migration finished'); process.exit(0); })
+    .catch((error) => { console.error('Promo banners migration failed:', error); process.exit(1); });
+}
+module.exports = addPromoBannersMigration;

@@ -84,12 +84,9 @@ async function addCafeBrandingImagesMigration() {
   }
 }
 
-addCafeBrandingImagesMigration()
-  .then(() => {
-    console.log('🎉 Cafe branding images migration finished');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('💥 Cafe branding images migration failed:', error);
-    process.exit(1);
-  });
+if (require.main === module) {
+  addCafeBrandingImagesMigration()
+    .then(() => { console.log('🎉 Cafe branding images migration finished'); process.exit(0); })
+    .catch((error) => { console.error('💥 Cafe branding images migration failed:', error); process.exit(1); });
+}
+module.exports = addCafeBrandingImagesMigration;

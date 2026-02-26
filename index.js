@@ -39,11 +39,13 @@ const { requireOnboarding, allowOnboardingRoutes } = require('./middleware/onboa
 const logger = require('./config/logger');
 const { generalLimiter, authLimiter, uploadLimiter, apiLimiter } = require('./middleware/rateLimiter');
 const { isMalformedString, sanitizeString, parsePositiveId, validateRequiredString } = require('./middleware/validateInput');
+const { validateProductionEnv } = require('./config/env');
 const PaymentMethod = require('./models/paymentMethod');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const HOST = process.env.HOST || '0.0.0.0'; // Allow network access
+const HOST = process.env.HOST || '0.0.0.0';
+const MAX_LIST_LIMIT = 100;
 
 // Configure multer for Excel file uploads
 const upload = multer({
@@ -121,7 +123,7 @@ app.use(cors({
       return callback(null, true);
     }
     
-    return callback(new Error('Not allowed by CORS'));
+    return callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -1344,9 +1346,8 @@ app.delete('/api/superadmin/cafes/:id/features/:featureKey', auth, requireSuperA
 app.get('/api/superadmin/cafes/:id/audit-log', auth, requireSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const limit = parseInt(req.query.limit) || 100;
-    const offset = parseInt(req.query.offset) || 0;
-    
+    const limit = Math.min(MAX_LIST_LIMIT, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const auditLog = await auditService.getCafeAuditLog(id, limit, offset);
     
     res.json({
@@ -1363,10 +1364,9 @@ app.get('/api/superadmin/cafes/:id/audit-log', auth, requireSuperAdmin, async (r
 // Get all audit logs (Super Admin)
 app.get('/api/superadmin/audit-logs', auth, requireSuperAdmin, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 100;
-    const offset = parseInt(req.query.offset) || 0;
+    const limit = Math.min(MAX_LIST_LIMIT, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const cafeId = req.query.cafe_id ? parseInt(req.query.cafe_id) : null;
-    
     const auditLogs = await auditService.getAllAuditLogs(limit, offset, cafeId);
     
     res.json({
@@ -1536,10 +1536,9 @@ app.post('/api/superadmin/exit-impersonation', auth, requireSuperAdmin, async (r
 // Get impersonation audit log (Super Admin only)
 app.get('/api/superadmin/impersonation-audit-logs', auth, requireSuperAdmin, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 100;
-    const offset = parseInt(req.query.offset) || 0;
+    const limit = Math.min(MAX_LIST_LIMIT, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const superAdminId = req.query.super_admin_id ? parseInt(req.query.super_admin_id) : null;
-    
     const auditLogs = await impersonationService.getImpersonationAuditLog(superAdminId, limit, offset);
     
     res.json({
@@ -2955,7 +2954,6 @@ app.get('/api/menu', async (req, res) => {
     if (token) {
       try {
         const jwt = require('jsonwebtoken');
-        const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
         const decoded = jwt.verify(token, JWT_SECRET, { clockTolerance: 600 });
         const user = await User.findById(decoded.userId);
         if (user) {
@@ -3144,8 +3142,8 @@ app.post('/api/menu', auth, requireActiveSubscription, requireFeature('menu_mana
   }
 });
 
-// Update menu item
-app.put('/api/menu/:id', async (req, res) => {
+// Update menu item (auth + cafe scope + feature)
+app.put('/api/menu/:id', auth, requireCafeMembership, requireActiveSubscription, requireFeature('menu_management'), async (req, res) => {
   try {
     const { id } = req.params;
     const { category_id, name, description, price, sort_order, is_active, image_url } = req.body;
@@ -3154,6 +3152,7 @@ app.put('/api/menu/:id', async (req, res) => {
       return res.status(400).json({ error: 'Category, name and price are required' });
     }
 
+    const cafeId = getOrderCafeId(req);
     const updatedItem = await MenuItem.update(id, {
       category_id,
       name: name.trim(),
@@ -3162,7 +3161,7 @@ app.put('/api/menu/:id', async (req, res) => {
       sort_order: sort_order || 0,
       is_available: is_active !== undefined ? is_active : true,
       image_url: image_url || null
-    });
+    }, cafeId);
 
     res.json(updatedItem);
   } catch (error) {
@@ -3171,11 +3170,12 @@ app.put('/api/menu/:id', async (req, res) => {
   }
 });
 
-// Delete menu item
-app.delete('/api/menu/:id', async (req, res) => {
+// Delete menu item (auth + cafe scope + feature)
+app.delete('/api/menu/:id', auth, requireCafeMembership, requireActiveSubscription, requireFeature('menu_management'), async (req, res) => {
   try {
     const { id } = req.params;
-    const deleted = await MenuItem.delete(id);
+    const cafeId = getOrderCafeId(req);
+    const deleted = await MenuItem.delete(id, cafeId);
     
     if (!deleted) {
       return res.status(404).json({ error: 'Menu item not found' });
@@ -4277,14 +4277,9 @@ app.get('/api/menu/featured', async (req, res) => {
     }
 
     const cafeId = cafe.id;
-    const limit = parseInt(req.query.limit, 10) || 6;
-    
-    // Ensure limit is a valid positive integer
-    if (isNaN(limit) || limit < 1) {
-      return res.status(400).json({ error: 'Invalid limit parameter' });
-    }
+    const rawLimit = parseInt(req.query.limit, 10);
+    const limit = Number.isNaN(rawLimit) ? 6 : Math.min(50, Math.max(1, rawLimit));
 
-    // Get featured items using MenuItem model
     const items = await MenuItem.getFeatured(cafeId, limit);
 
     res.json({ items });
@@ -4522,7 +4517,6 @@ app.get('/api/currency-settings', async (req, res) => {
     if (token) {
       try {
         const jwt = require('jsonwebtoken');
-        const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
         const decoded = jwt.verify(token, JWT_SECRET, { clockTolerance: 600 });
         const user = await User.findById(decoded.userId);
         if (user && user.cafe_id) cafeId = user.cafe_id;
@@ -4598,7 +4592,6 @@ app.get('/api/cafe-settings', async (req, res) => {
     if (token) {
       try {
         const jwt = require('jsonwebtoken');
-        const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
         const decoded = jwt.verify(token, JWT_SECRET, { clockTolerance: 600 });
         const user = await User.findById(decoded.userId);
         if (user) {
@@ -7072,7 +7065,6 @@ app.get('/api/payment-methods', async (req, res) => {
     if (token) {
       try {
         const jwt = require('jsonwebtoken');
-        const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
         const decoded = jwt.verify(token, JWT_SECRET, { clockTolerance: 600 });
         const user = await User.findById(decoded.userId);
         if (user) {
@@ -7311,20 +7303,18 @@ app.post('/api/backup', auth, adminAuth, async (req, res) => {
 
 // Global error handler middleware (must be last)
 app.use((err, req, res, next) => {
-  logger.error('Unhandled error:', {
-    error: err.message,
+  const status = err.statusCode || err.status || 500;
+  logger.error('Unhandled error', {
+    message: err.message,
     stack: err.stack,
     path: req.path,
     method: req.method,
     ip: req.ip
   });
 
-  // Don't leak error details in production
-  const isDevelopment = process.env.NODE_ENV === 'development';
-  
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal server error',
-    ...(isDevelopment && { stack: err.stack, details: err })
+  const isProduction = process.env.NODE_ENV === 'production';
+  res.status(status).json({
+    error: isProduction ? 'Internal server error' : (err.message || 'Internal server error')
   });
 });
 
@@ -7337,7 +7327,7 @@ app.use((req, res) => {
 // Initialize database and start server
 const startServer = async () => {
   try {
-    // Set timezone to UTC for consistent time handling
+    validateProductionEnv();
     process.env.TZ = 'UTC';
     logger.info('🌍 Server timezone set to UTC for international compatibility');
     

@@ -47,12 +47,9 @@ async function addSuperadminMigration() {
   }
 }
 
-addSuperadminMigration()
-  .then(() => {
-    console.log('🎉 Superadmin migration finished');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('💥 Superadmin migration failed:', error);
-    process.exit(1);
-  }); 
+if (require.main === module) {
+  addSuperadminMigration()
+    .then(() => { console.log('🎉 Superadmin migration finished'); process.exit(0); })
+    .catch((error) => { console.error('💥 Superadmin migration failed:', error); process.exit(1); });
+}
+module.exports = addSuperadminMigration; 

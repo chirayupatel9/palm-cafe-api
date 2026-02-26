@@ -25,12 +25,9 @@ async function addChefReceptionRolesMigration() {
   }
 }
 
-addChefReceptionRolesMigration()
-  .then(() => {
-    console.log('🎉 Chef and reception roles migration finished');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('💥 Chef and reception roles migration failed:', error);
-    process.exit(1);
-  }); 
+if (require.main === module) {
+  addChefReceptionRolesMigration()
+    .then(() => { console.log('🎉 Chef and reception roles migration finished'); process.exit(0); })
+    .catch((error) => { console.error('💥 Chef and reception roles migration failed:', error); process.exit(1); });
+}
+module.exports = addChefReceptionRolesMigration; 

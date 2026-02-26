@@ -39,12 +39,9 @@ async function addMenuImagesMigration() {
   }
 }
 
-addMenuImagesMigration()
-  .then(() => {
-    console.log('🎉 Menu images migration finished');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('💥 Menu images migration failed:', error);
-    process.exit(1);
-  }); 
+if (require.main === module) {
+  addMenuImagesMigration()
+    .then(() => { console.log('🎉 Menu images migration finished'); process.exit(0); })
+    .catch((error) => { console.error('💥 Menu images migration failed:', error); process.exit(1); });
+}
+module.exports = addMenuImagesMigration; 

@@ -45,12 +45,9 @@ async function addFeaturedPriorityMigration() {
   }
 }
 
-addFeaturedPriorityMigration()
-  .then(() => {
-    console.log('🎉 Featured priority migration finished');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('💥 Featured priority migration failed:', error);
-    process.exit(1);
-  });
+if (require.main === module) {
+  addFeaturedPriorityMigration()
+    .then(() => { console.log('🎉 Featured priority migration finished'); process.exit(0); })
+    .catch((error) => { console.error('💥 Featured priority migration failed:', error); process.exit(1); });
+}
+module.exports = addFeaturedPriorityMigration;

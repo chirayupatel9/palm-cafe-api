@@ -34,12 +34,9 @@ async function addSurfaceColorsMigration() {
   }
 }
 
-addSurfaceColorsMigration()
-  .then(() => {
-    console.log('🎉 Surface colors migration finished');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('💥 Surface colors migration failed:', error);
-    process.exit(1);
-  }); 
+if (require.main === module) {
+  addSurfaceColorsMigration()
+    .then(() => { console.log('🎉 Surface colors migration finished'); process.exit(0); })
+    .catch((error) => { console.error('💥 Surface colors migration failed:', error); process.exit(1); });
+}
+module.exports = addSurfaceColorsMigration; 
