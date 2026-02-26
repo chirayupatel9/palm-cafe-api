@@ -7,6 +7,7 @@ const Category = require('../models/category');
 const MenuItem = require('../models/menuItem');
 const TaxSettings = require('../models/taxSettings');
 const CurrencySettings = require('../models/currencySettings');
+const Cafe = require('../models/cafe');
 const CafeSettings = require('../models/cafeSettings');
 const PromoBanner = require('../models/promoBanner');
 const { pool } = require('../config/database');
