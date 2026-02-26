@@ -23,6 +23,7 @@ const Inventory = require('./models/inventory');
 const Order = require('./models/order');
 const Customer = require('./models/customer');
 const Cafe = require('./models/cafe');
+const PromoBanner = require('./models/promoBanner');
 const CafeMetrics = require('./models/cafeMetrics');
 const CafeDailyMetrics = require('./models/cafeDailyMetrics');
 const subscriptionService = require('./services/subscriptionService');
@@ -4434,11 +4435,20 @@ app.get('/api/menu/branding', async (req, res) => {
       console.warn('Error fetching cafe branding:', settingsError);
     }
 
-    // Return branding information
+    // Multiple promo banners (from promo_banners table); frontend uses this when present
+    let banners = [];
+    try {
+      banners = await PromoBanner.getActiveByCafeId(cafe.id);
+    } catch (bannersError) {
+      console.warn('Error fetching promo banners for branding:', bannersError.message);
+    }
+
+    // Return branding information (banners array takes precedence over single promo_banner_image_url on frontend)
     res.json({
       hero_image_url: heroImageUrl,
       promo_banner_image_url: promoBannerImageUrl,
       logo_url: logoUrl,
+      banners: banners.length > 0 ? banners : undefined,
       cafe_name: cafe.name || null,
       address: cafe.address || null,
       phone: cafe.phone || null,
@@ -5092,6 +5102,149 @@ app.delete('/api/cafe-settings/promo-banner-image', auth, async (req, res) => {
   } catch (error) {
     console.error('Error removing promo banner image:', error);
     res.status(500).json({ error: 'Failed to remove promo banner image' });
+  }
+});
+
+// ---------- Promo Banners (multiple per cafe, admin only) ----------
+// List promo banners for the current cafe
+app.get('/api/promo-banners', auth, adminAuth, requireOrderCafeScope, async (req, res) => {
+  try {
+    const cafeId = getOrderCafeId(req);
+    if (!cafeId) {
+      return res.status(400).json({ error: 'User must be associated with a cafe' });
+    }
+    const banners = await PromoBanner.getByCafeId(cafeId);
+    res.json(banners);
+  } catch (error) {
+    console.error('Error fetching promo banners:', error);
+    res.status(500).json({ error: 'Failed to fetch promo banners' });
+  }
+});
+
+// Create promo banner (upload image + optional link_url, priority, active)
+app.post('/api/promo-banners', auth, adminAuth, requireOrderCafeScope, imageUpload.single('image'), async (req, res) => {
+  try {
+    const cafeId = getOrderCafeId(req);
+    if (!cafeId) {
+      return res.status(400).json({ error: 'User must be associated with a cafe' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file uploaded' });
+    }
+    if (!req.file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: 'Only image files are allowed' });
+    }
+    const maxSize = 5 * 1024 * 1024;
+    if (req.file.size > maxSize) {
+      return res.status(400).json({ error: 'Image size must be less than 5MB' });
+    }
+    const fileExtension = path.extname(req.file.originalname) || '.jpg';
+    const fileName = `promo-banner-${Date.now()}-${cafeId}${fileExtension}`;
+    const filePath = path.join(__dirname, 'public', 'images', fileName);
+    const uploadDir = path.dirname(filePath);
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    fs.writeFileSync(filePath, req.file.buffer);
+    const imageUrl = `/images/${fileName}`;
+    const linkUrl = req.body.link_url ? String(req.body.link_url).trim() || null : null;
+    const priority = req.body.priority != null && !Number.isNaN(Number(req.body.priority)) ? Number(req.body.priority) : 0;
+    const active = req.body.active !== 'false' && req.body.active !== false;
+    const banner = await PromoBanner.create({ cafe_id: cafeId, image_url: imageUrl, link_url: linkUrl, priority, active });
+    res.status(201).json(banner);
+  } catch (error) {
+    console.error('Error creating promo banner:', error);
+    res.status(500).json({ error: 'Failed to create promo banner', details: error.message });
+  }
+});
+
+// Update promo banner (link_url, priority, active)
+app.put('/api/promo-banners/:id', auth, adminAuth, requireOrderCafeScope, async (req, res) => {
+  try {
+    const cafeId = getOrderCafeId(req);
+    if (!cafeId) {
+      return res.status(400).json({ error: 'User must be associated with a cafe' });
+    }
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: 'Invalid banner id' });
+    }
+    const { link_url, priority, active } = req.body;
+    const data = {};
+    if (link_url !== undefined) data.link_url = link_url;
+    if (priority !== undefined) data.priority = Number(priority);
+    if (active !== undefined) data.active = active;
+    const updated = await PromoBanner.update(id, cafeId, data);
+    if (!updated) {
+      return res.status(404).json({ error: 'Banner not found' });
+    }
+    res.json(updated);
+  } catch (error) {
+    console.error('Error updating promo banner:', error);
+    res.status(500).json({ error: 'Failed to update promo banner', details: error.message });
+  }
+});
+
+// Replace promo banner image
+app.patch('/api/promo-banners/:id/image', auth, adminAuth, requireOrderCafeScope, imageUpload.single('image'), async (req, res) => {
+  try {
+    const cafeId = getOrderCafeId(req);
+    if (!cafeId) {
+      return res.status(400).json({ error: 'User must be associated with a cafe' });
+    }
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: 'Invalid banner id' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file uploaded' });
+    }
+    if (!req.file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: 'Only image files are allowed' });
+    }
+    const maxSize = 5 * 1024 * 1024;
+    if (req.file.size > maxSize) {
+      return res.status(400).json({ error: 'Image size must be less than 5MB' });
+    }
+    const fileExtension = path.extname(req.file.originalname) || '.jpg';
+    const fileName = `promo-banner-${Date.now()}-${cafeId}-${id}${fileExtension}`;
+    const filePath = path.join(__dirname, 'public', 'images', fileName);
+    const uploadDir = path.dirname(filePath);
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    fs.writeFileSync(filePath, req.file.buffer);
+    const imageUrl = `/images/${fileName}`;
+    const updated = await PromoBanner.update(id, cafeId, { image_url: imageUrl });
+    if (!updated) {
+      return res.status(404).json({ error: 'Banner not found' });
+    }
+    res.json(updated);
+  } catch (error) {
+    console.error('Error replacing promo banner image:', error);
+    res.status(500).json({ error: 'Failed to replace banner image', details: error.message });
+  }
+});
+
+// Delete promo banner
+app.delete('/api/promo-banners/:id', auth, adminAuth, requireOrderCafeScope, async (req, res) => {
+  try {
+    const cafeId = getOrderCafeId(req);
+    if (!cafeId) {
+      return res.status(400).json({ error: 'User must be associated with a cafe' });
+    }
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: 'Invalid banner id' });
+    }
+    const deleted = await PromoBanner.delete(id, cafeId);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Banner not found' });
+    }
+    res.json({ success: true, message: 'Banner deleted' });
+  } catch (error) {
+    console.error('Error deleting promo banner:', error);
+    res.status(500).json({ error: 'Failed to delete promo banner', details: error.message });
   }
 });
 
