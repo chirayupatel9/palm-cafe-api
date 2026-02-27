@@ -1908,55 +1908,50 @@ app.get('/api/currency-settings/available', async (req, res) => {
   }
 });
 
-// Get current cafe settings (public endpoint - works with or without auth)
+// Get current cafe settings. When token is sent: always use logged-in admin's cafe (or impersonation). No query params.
 app.get('/api/cafe-settings', async (req, res) => {
   try {
     let cafeId = null;
-    let cafeSlug = req.query.cafeSlug || null;
-    
-    // Try to get cafeId from authenticated user first (if token provided)
-    // Use auth middleware pattern but don't require it (allow unauthenticated access)
+    let cafeSlug = null;
     const token = req.header('Authorization')?.replace('Bearer ', '');
+
     if (token) {
+      // Token present: use only the logged-in admin's cafe (or impersonated cafe). Ignore query params.
       try {
         const jwt = require('jsonwebtoken');
         const decoded = jwt.verify(token, JWT_SECRET, { clockTolerance: 600 });
         const user = await User.findById(decoded.userId);
         if (user) {
-          // Check for impersonation context in token
           if (decoded.impersonatedCafeId) {
-            // User is impersonating - use impersonated cafe_id
             cafeId = decoded.impersonatedCafeId;
             cafeSlug = decoded.impersonatedCafeSlug || null;
             logger.debug('[CAFE-SETTINGS] Using impersonated cafe_id:', cafeId, 'slug:', cafeSlug);
           } else {
-            // Normal user - get their cafe_id and slug
             const userWithCafe = await User.findByIdWithCafe(user.id);
             if (userWithCafe && userWithCafe.cafe_id) {
               cafeId = userWithCafe.cafe_id;
               cafeSlug = userWithCafe.cafe_slug || null;
-              logger.debug('[CAFE-SETTINGS] Using user cafe_id:', cafeId, 'slug:', cafeSlug);
+              logger.debug('[CAFE-SETTINGS] Using logged-in admin cafe_id:', cafeId, 'slug:', cafeSlug);
             }
           }
         }
       } catch (error) {
-        // Token invalid or expired, continue as unauthenticated user
-        logger.debug('[CAFE-SETTINGS] Token invalid, continuing as unauthenticated');
+        logger.debug('[CAFE-SETTINGS] Token invalid or expired:', error.message);
       }
     }
-    
-    // If no cafeId from user, get cafe slug from query param or use default
-    if (!cafeId) {
-      cafeSlug = req.query.cafeSlug || 'default';
+
+    // No token or unauthenticated: fall back to query cafeSlug (e.g. public/customer flows)
+    if (cafeId === null && !token) {
+      const slug = req.query.cafeSlug || 'default';
       try {
-        const cafe = await Cafe.getBySlug(cafeSlug);
+        const cafe = await Cafe.getBySlug(slug);
         if (cafe) {
           cafeId = cafe.id;
-          logger.debug('[CAFE-SETTINGS] Using cafe slug to get cafe_id:', cafeId, 'slug:', cafeSlug);
+          cafeSlug = cafe.slug || slug;
+          logger.debug('[CAFE-SETTINGS] Unauthenticated request, using slug:', slug);
         }
       } catch (error) {
-        // Cafe might not exist, use null (will get default settings)
-        logger.debug('[CAFE-SETTINGS] Cafe not found for slug:', cafeSlug);
+        logger.debug('[CAFE-SETTINGS] Cafe not found for slug:', slug);
       }
     }
     
@@ -1979,6 +1974,23 @@ app.get('/api/cafe-settings', async (req, res) => {
         error: 'Cafe settings data mismatch. Please contact support.',
         details: `Requested cafe ID: ${cafeId}, but settings belong to cafe ID: ${cafeSettings.cafe_id}`
       });
+    }
+
+    // When settings have no name or a generic placeholder, use canonical name from cafes table
+    const nameFromSettings = (cafeSettings.cafe_name || '').trim();
+    const useCafeTableName = !nameFromSettings || /^default\s*cafe$/i.test(nameFromSettings);
+    if (cafeId && useCafeTableName) {
+      try {
+        const cafe = await Cafe.getById(cafeId);
+        if (cafe && cafe.name) {
+          cafeSettings = { ...cafeSettings, cafe_name: cafe.name };
+          if (cafe.slug) {
+            cafeSettings.cafe_slug = cafe.slug;
+          }
+        }
+      } catch (err) {
+        logger.debug('[CAFE-SETTINGS] Could not enrich with cafe name (cafe may not exist):', err.message);
+      }
     }
     
     res.json(cafeSettings);

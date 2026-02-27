@@ -593,12 +593,19 @@ class Invoice {
         params
       );
 
+      // Handle empty result sets (e.g. no invoices for this cafe) - use optional chaining
+      const revRow = totalRevenue[0];
+      const ordRow = totalOrders[0];
+      const custRow = uniqueCustomers[0];
+      const tipsRow = totalTips[0];
+      const taxRow = totalTax[0];
+
       return {
-        totalRevenue: parseFloat(totalRevenue[0].totalRevenue) || 0,
-        totalOrders: totalOrders[0].totalOrders || 0,
-        uniqueCustomers: uniqueCustomers[0].uniqueCustomers || 0,
-        totalTips: parseFloat(totalTips[0].totalTips) || 0,
-        totalTax: parseFloat(totalTax[0].totalTax) || 0
+        totalRevenue: parseFloat(revRow?.totalRevenue) || 0,
+        totalOrders: Number(ordRow?.totalOrders) || 0,
+        uniqueCustomers: Number(custRow?.uniqueCustomers) || 0,
+        totalTips: parseFloat(tipsRow?.totalTips) || 0,
+        totalTax: parseFloat(taxRow?.totalTax) || 0
       };
     } catch (error) {
       throw new Error(`Error fetching statistics: ${error.message}`);

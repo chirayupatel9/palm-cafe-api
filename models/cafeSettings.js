@@ -271,7 +271,7 @@ class CafeSettings {
       let existingSettingsId = null;
       
       if (hasCafeIdColumn && settingsData.cafe_id) {
-        // Check if active settings exist for this cafe
+        // Multi-cafe: only touch this cafe's row
         const [existing] = await connection.execute(
           'SELECT id FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE LIMIT 1',
           [settingsData.cafe_id]
@@ -284,18 +284,18 @@ class CafeSettings {
         } else {
           logger.debug('[CafeSettings.update] No active settings found, creating new record');
         }
-      } else {
-        // Legacy: no cafe_id column, check if any active settings exist
+      } else if (!hasCafeIdColumn) {
+        // Legacy: table has no cafe_id column, single global row
         const [existing] = await connection.execute(
           'SELECT id FROM cafe_settings WHERE is_active = TRUE LIMIT 1'
         );
-        
         if (existing.length > 0) {
           shouldUpdate = true;
           existingSettingsId = existing[0].id;
-          logger.debug('[CafeSettings.update] Updating existing settings record ID:', existingSettingsId);
+          logger.debug('[CafeSettings.update] Updating existing settings record ID (legacy):', existingSettingsId);
         }
       }
+      // If hasCafeIdColumn but no settingsData.cafe_id: do not update any row (route should send cafe_id)
       
       if (shouldUpdate && existingSettingsId) {
         // UPDATE existing record instead of creating new one
@@ -317,13 +317,14 @@ class CafeSettings {
         
         if (updateFields.length > 0) {
           updateValues.push(existingSettingsId);
-          
-          const updateQuery = `
-            UPDATE cafe_settings 
-            SET ${updateFields.join(', ')}
-            WHERE id = ?
-          `;
-          
+          // Scope by cafe_id so we never update another cafe's row (multi-cafe safety)
+          const hasCafeIdInUpdate = hasCafeIdColumn && settingsData.cafe_id;
+          if (hasCafeIdInUpdate) {
+            updateValues.push(settingsData.cafe_id);
+          }
+          const updateQuery = hasCafeIdInUpdate
+            ? `UPDATE cafe_settings SET ${updateFields.join(', ')} WHERE id = ? AND cafe_id = ?`
+            : `UPDATE cafe_settings SET ${updateFields.join(', ')} WHERE id = ?`;
           await connection.execute(updateQuery, updateValues);
         }
       } else {

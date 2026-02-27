@@ -79,12 +79,19 @@ async function generatePDF(invoice) {
     doc.rect(0, 0, pageWidth, 70).fill('#f4e1ba');
 
     try {
-      const logoPath = cafeSettings.logo_url.startsWith('/') ?
-        `./public${cafeSettings.logo_url}` :
-        `./public/images/${cafeSettings.logo_url}`;
-      doc.image(logoPath, margin, 10, { width: 50, height: 50 });
+      const logoUrl = cafeSettings.logo_url;
+      if (logoUrl && typeof logoUrl === 'string') {
+        const logoPath = logoUrl.startsWith('/') ?
+          `./public${logoUrl}` :
+          `./public/images/${logoUrl}`;
+        doc.image(logoPath, margin, 10, { width: 50, height: 50 });
+      } else {
+        throw new Error('No logo URL');
+      }
     } catch (error) {
-      logger.error('Error adding logo to PDF:', error);
+      if (error.message !== 'No logo URL') {
+        logger.error('Error adding logo to PDF:', error);
+      }
       const cafeInitial = cafeSettings.cafe_name ? cafeSettings.cafe_name.charAt(0).toUpperCase() : 'C';
       doc.circle(margin + 25, 35, 25).fill('#153059');
       doc.circle(margin + 25, 35, 25).stroke('#f4e1ba').lineWidth(2);
