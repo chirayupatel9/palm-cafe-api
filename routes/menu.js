@@ -8,6 +8,7 @@ const MenuItem = require('../models/menuItem');
 const TaxSettings = require('../models/taxSettings');
 const CurrencySettings = require('../models/currencySettings');
 const Cafe = require('../models/cafe');
+const User = require('../models/user');
 const CafeSettings = require('../models/cafeSettings');
 const PromoBanner = require('../models/promoBanner');
 const { pool } = require('../config/database');
@@ -271,12 +272,12 @@ app.get('/api/menu', async (req, res) => {
         const decoded = jwt.verify(token, JWT_SECRET, { clockTolerance: 600 });
         const user = await User.findById(decoded.userId);
         if (user) {
-          const userWithCafe = await User.findByIdWithCafe(user.id);
-          if (userWithCafe) {
-            // Check if impersonating (from impersonation service)
-            if (req.impersonation && req.impersonation.isImpersonating) {
-              cafeId = req.impersonation.cafeId;
-            } else if (userWithCafe.cafe_id) {
+          // Use impersonation cafe from token (this route does not run auth middleware, so read from decoded)
+          if (decoded.impersonatedCafeId) {
+            cafeId = decoded.impersonatedCafeId;
+          } else {
+            const userWithCafe = await User.findByIdWithCafe(user.id);
+            if (userWithCafe && userWithCafe.cafe_id) {
               cafeId = userWithCafe.cafe_id;
             }
           }
