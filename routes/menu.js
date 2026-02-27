@@ -2707,9 +2707,19 @@ app.post('/api/menu/:id/image', auth, requireCafeMembership, imageUpload.single(
     // Save file
     fs.writeFileSync(filePath, req.file.buffer);
 
-    // Update menu item with new image URL
+    // Update menu item with new image URL (pass existing fields so update() validation passes)
     const imageUrl = `/images/${fileName}`;
-    const updatedItem = await MenuItem.update(id, { image_url: imageUrl });
+    const updatePayload = {
+      category_id: menuItem.category_id,
+      name: menuItem.name,
+      description: menuItem.description || '',
+      price: menuItem.price,
+      sort_order: menuItem.sort_order,
+      is_available: menuItem.is_available,
+      image_url: imageUrl,
+      featured_priority: menuItem.featured_priority
+    };
+    const updatedItem = await MenuItem.update(id, updatePayload);
 
     res.json({ 
       success: true, 
