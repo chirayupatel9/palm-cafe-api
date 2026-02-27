@@ -168,7 +168,9 @@ class Invoice {
       if (hasOrderId) {
         selectFields.push('i.order_id');
       }
-      
+      if (hasCafeId) {
+        selectFields.push('i.cafe_id');
+      }
       selectFields.push('i.customer_name');
       
       if (existingColumns.includes('customer_phone')) {
@@ -295,6 +297,9 @@ class Invoice {
       const hasTotal = existingColumns.includes('total');
 
       const selectFields = ['i.invoice_number', 'i.order_id'];
+      if (hasCafeId) {
+        selectFields.push('i.cafe_id');
+      }
       selectFields.push('i.customer_name');
       
       if (existingColumns.includes('customer_phone')) {

@@ -187,6 +187,60 @@ app.post('/api/invoices', auth, async (req, res) => {
   }
 });
 
+// Generate invoice for an existing order (admin)
+app.post('/api/invoices/generate', auth, requireOrderCafeScope, async (req, res) => {
+  try {
+    const cafeId = getOrderCafeId(req);
+    const { order_id } = req.body;
+
+    if (!order_id) {
+      return res.status(400).json({ error: 'order_id is required' });
+    }
+
+    const order = await Order.getById(order_id, cafeId);
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const existingInvoice = await Invoice.getByOrderNumber(order.order_number, cafeId);
+    if (existingInvoice) {
+      return res.json({ invoiceNumber: existingInvoice.invoice_number });
+    }
+
+    const invoiceNumber = await Invoice.getNextInvoiceNumber();
+    const items = (order.items || []).map(function (item) {
+      return {
+        id: item.menu_item_id,
+        name: item.name,
+        price: parseFloat(item.price),
+        quantity: item.quantity,
+        total: parseFloat(item.total)
+      };
+    });
+
+    const invoiceData = {
+      invoiceNumber,
+      order_id: order.id,
+      customerName: order.customer_name || 'Walk-in Customer',
+      customerPhone: order.customer_phone || null,
+      paymentMethod: order.payment_method || 'cash',
+      items: items,
+      subtotal: parseFloat(order.total_amount),
+      taxAmount: parseFloat(order.tax_amount || 0),
+      tipAmount: parseFloat(order.tip_amount || 0),
+      total: parseFloat(order.final_amount),
+      date: order.created_at || new Date().toISOString(),
+      cafe_id: cafeId
+    };
+
+    await Invoice.create(invoiceData);
+    res.json({ invoiceNumber });
+  } catch (error) {
+    logger.error('Error generating invoice from order:', error);
+    res.status(500).json({ error: 'Failed to generate invoice' });
+  }
+});
+
 // Generate PDF for invoice
 app.get('/api/invoices/:invoiceNumber/pdf', auth, requireOrderCafeScope, async (req, res) => {
   try {
