@@ -218,44 +218,78 @@ class PaymentMethod {
     }
   }
 
-  // Update payment method
-  static async update(id, paymentMethodData) {
+  // Update payment method (cafeId required when table has cafe_id for scoping)
+  static async update(id, cafeId, paymentMethodData) {
     try {
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'payment_methods' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      const hasCafeId = columns.length > 0;
+
       const {
         name, code, description, icon, display_order, is_active
       } = paymentMethodData;
 
-      // Check if code already exists for other payment methods
-      if (code) {
-        const existing = await this.getByCode(code);
-        if (existing && existing.id !== parseInt(id)) {
+      if (code && hasCafeId && cafeId != null) {
+        const existingByCode = await this.getByCode(code, cafeId);
+        if (existingByCode && existingByCode.id !== parseInt(id)) {
+          throw new Error('Payment method code already exists for this cafe');
+        }
+      } else if (code && (!hasCafeId || cafeId == null)) {
+        const existingByCode = await this.getByCode(code);
+        if (existingByCode && existingByCode.id !== parseInt(id)) {
           throw new Error('Payment method code already exists');
         }
       }
 
-      const [result] = await pool.execute(`
+      let query = `
         UPDATE payment_methods 
         SET name = ?, code = ?, description = ?, icon = ?, 
             display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `, [name, code, description, icon, display_order, is_active, id]);
+      `;
+      const params = [name, code, description, icon, display_order, is_active, id];
+      if (hasCafeId && cafeId != null) {
+        query += ' AND cafe_id = ?';
+        params.push(cafeId);
+      }
+
+      const [result] = await pool.execute(query, params);
 
       if (result.affectedRows === 0) {
         throw new Error('Payment method not found');
       }
 
-      return await this.getById(id);
+      return await this.getById(id, cafeId);
     } catch (error) {
       throw new Error(`Error updating payment method: ${error.message}`);
     }
   }
 
-  // Delete payment method
-  static async delete(id) {
+  // Delete payment method (cafeId required when table has cafe_id for scoping)
+  static async delete(id, cafeId) {
     try {
-      const [result] = await pool.execute(`
-        DELETE FROM payment_methods WHERE id = ?
-      `, [id]);
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'payment_methods' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      const hasCafeId = columns.length > 0;
+
+      let query = 'DELETE FROM payment_methods WHERE id = ?';
+      const params = [id];
+      if (hasCafeId && cafeId != null) {
+        query += ' AND cafe_id = ?';
+        params.push(cafeId);
+      }
+
+      const [result] = await pool.execute(query, params);
 
       if (result.affectedRows === 0) {
         throw new Error('Payment method not found');
@@ -267,44 +301,75 @@ class PaymentMethod {
     }
   }
 
-  // Toggle payment method status
-  static async toggleStatus(id) {
+  // Toggle payment method status (cafeId required when table has cafe_id for scoping)
+  static async toggleStatus(id, cafeId) {
     try {
-      const paymentMethod = await this.getById(id);
+      const paymentMethod = await this.getById(id, cafeId);
       if (!paymentMethod) {
         throw new Error('Payment method not found');
       }
 
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'payment_methods' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      const hasCafeId = columns.length > 0;
+
       const newStatus = !paymentMethod.is_active;
-      const [result] = await pool.execute(`
+      let query = `
         UPDATE payment_methods 
         SET is_active = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `, [newStatus, id]);
+      `;
+      const params = [newStatus, id];
+      if (hasCafeId && cafeId != null) {
+        query += ' AND cafe_id = ?';
+        params.push(cafeId);
+      }
+
+      const [result] = await pool.execute(query, params);
 
       if (result.affectedRows === 0) {
         throw new Error('Payment method not found');
       }
 
-      return await this.getById(id);
+      return await this.getById(id, cafeId);
     } catch (error) {
       throw new Error(`Error toggling payment method status: ${error.message}`);
     }
   }
 
-  // Reorder payment methods
-  static async reorder(orderedIds) {
+  // Reorder payment methods (cafeId required when table has cafe_id; only rows with cafe_id = ? are updated)
+  static async reorder(cafeId, orderedIds) {
     try {
+      const [columns] = await pool.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'payment_methods' 
+        AND COLUMN_NAME = 'cafe_id'
+      `);
+      const hasCafeId = columns.length > 0;
+
       const connection = await pool.getConnection();
       await connection.beginTransaction();
 
       try {
         for (let i = 0; i < orderedIds.length; i++) {
-          await connection.execute(`
+          let query = `
             UPDATE payment_methods 
             SET display_order = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-          `, [i + 1, orderedIds[i]]);
+          `;
+          const params = [i + 1, orderedIds[i]];
+          if (hasCafeId && cafeId != null) {
+            query += ' AND cafe_id = ?';
+            params.push(cafeId);
+          }
+          await connection.execute(query, params);
         }
 
         await connection.commit();

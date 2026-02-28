@@ -99,19 +99,27 @@ module.exports = function registerPaymentMethods(app) {
         return res.status(400).json({ error: 'Name and code are required' });
       }
 
+      let cafeId = null;
       if (req.user.role !== 'superadmin') {
         const userWithCafe = await User.findByIdWithCafe(req.user.id);
         if (userWithCafe && userWithCafe.cafe_id) {
-          const existing = await PaymentMethod.getById(id, userWithCafe.cafe_id);
+          cafeId = userWithCafe.cafe_id;
+          const existing = await PaymentMethod.getById(id, cafeId);
           if (!existing) {
             return res.status(403).json({ error: 'Payment method not found or access denied' });
           }
         } else {
           return res.status(403).json({ error: 'User must belong to a cafe' });
         }
+      } else {
+        const existing = await PaymentMethod.getById(id, null);
+        if (!existing) {
+          return res.status(404).json({ error: 'Payment method not found' });
+        }
+        cafeId = existing.cafe_id ?? null;
       }
 
-      const updatedPaymentMethod = await PaymentMethod.update(id, paymentMethodData);
+      const updatedPaymentMethod = await PaymentMethod.update(id, cafeId, paymentMethodData);
       res.json(updatedPaymentMethod);
     } catch (error) {
       logger.error('Error updating payment method:', error);
@@ -123,19 +131,27 @@ module.exports = function registerPaymentMethods(app) {
     try {
       const { id } = req.params;
 
+      let cafeId = null;
       if (req.user.role !== 'superadmin') {
         const userWithCafe = await User.findByIdWithCafe(req.user.id);
         if (userWithCafe && userWithCafe.cafe_id) {
-          const existing = await PaymentMethod.getById(id, userWithCafe.cafe_id);
+          cafeId = userWithCafe.cafe_id;
+          const existing = await PaymentMethod.getById(id, cafeId);
           if (!existing) {
             return res.status(403).json({ error: 'Payment method not found or access denied' });
           }
         } else {
           return res.status(403).json({ error: 'User must belong to a cafe' });
         }
+      } else {
+        const existing = await PaymentMethod.getById(id, null);
+        if (!existing) {
+          return res.status(404).json({ error: 'Payment method not found' });
+        }
+        cafeId = existing.cafe_id ?? null;
       }
 
-      const result = await PaymentMethod.delete(id);
+      const result = await PaymentMethod.delete(id, cafeId);
       res.json(result);
     } catch (error) {
       logger.error('Error deleting payment method:', error);
@@ -147,19 +163,27 @@ module.exports = function registerPaymentMethods(app) {
     try {
       const { id } = req.params;
 
+      let cafeId = null;
       if (req.user.role !== 'superadmin') {
         const userWithCafe = await User.findByIdWithCafe(req.user.id);
         if (userWithCafe && userWithCafe.cafe_id) {
-          const existing = await PaymentMethod.getById(id, userWithCafe.cafe_id);
+          cafeId = userWithCafe.cafe_id;
+          const existing = await PaymentMethod.getById(id, cafeId);
           if (!existing) {
             return res.status(403).json({ error: 'Payment method not found or access denied' });
           }
         } else {
           return res.status(403).json({ error: 'User must belong to a cafe' });
         }
+      } else {
+        const existing = await PaymentMethod.getById(id, null);
+        if (!existing) {
+          return res.status(404).json({ error: 'Payment method not found' });
+        }
+        cafeId = existing.cafe_id ?? null;
       }
 
-      const updatedPaymentMethod = await PaymentMethod.toggleStatus(id);
+      const updatedPaymentMethod = await PaymentMethod.toggleStatus(id, cafeId);
       res.json(updatedPaymentMethod);
     } catch (error) {
       logger.error('Error toggling payment method status:', error);
@@ -175,11 +199,13 @@ module.exports = function registerPaymentMethods(app) {
         return res.status(400).json({ error: 'Ordered IDs array is required' });
       }
 
+      let cafeId = null;
       if (req.user.role !== 'superadmin') {
         const userWithCafe = await User.findByIdWithCafe(req.user.id);
         if (userWithCafe && userWithCafe.cafe_id) {
+          cafeId = userWithCafe.cafe_id;
           for (const id of orderedIds) {
-            const existing = await PaymentMethod.getById(id, userWithCafe.cafe_id);
+            const existing = await PaymentMethod.getById(id, cafeId);
             if (!existing) {
               return res.status(403).json({ error: `Payment method ${id} not found or access denied` });
             }
@@ -187,9 +213,18 @@ module.exports = function registerPaymentMethods(app) {
         } else {
           return res.status(403).json({ error: 'User must belong to a cafe' });
         }
+      } else {
+        if (orderedIds.length === 0) {
+          return res.status(400).json({ error: 'Ordered IDs array is required' });
+        }
+        const existing = await PaymentMethod.getById(orderedIds[0], null);
+        if (!existing) {
+          return res.status(403).json({ error: 'Payment method not found or access denied' });
+        }
+        cafeId = existing.cafe_id ?? null;
       }
 
-      const result = await PaymentMethod.reorder(orderedIds);
+      const result = await PaymentMethod.reorder(cafeId, orderedIds);
       res.json(result);
     } catch (error) {
       logger.error('Error reordering payment methods:', error);
