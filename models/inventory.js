@@ -519,6 +519,26 @@ class Inventory {
           'Supplier': 'Sweet Supplies',
           'Reorder Level': 3,
           'Description': 'Granulated white sugar'
+        },
+        {
+          'Name': 'Flour',
+          'Category': 'Pantry',
+          'Quantity': 25,
+          'Unit': 'kg',
+          'Cost per Unit': 1.80,
+          'Supplier': 'Bakery Supplies',
+          'Reorder Level': 8,
+          'Description': 'All-purpose flour for baking'
+        },
+        {
+          'Name': 'Butter',
+          'Category': 'Dairy',
+          'Quantity': 10,
+          'Unit': 'kg',
+          'Cost per Unit': 8.00,
+          'Supplier': 'Dairy Farm Ltd.',
+          'Reorder Level': 4,
+          'Description': 'Unsalted butter for cooking and baking'
         }
       ];
 
