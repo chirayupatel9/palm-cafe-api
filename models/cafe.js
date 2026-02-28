@@ -209,6 +209,20 @@ class Cafe {
   }
 
   /**
+   * Get first active cafe (for public endpoints when no slug is provided)
+   */
+  static async getFirstActive() {
+    try {
+      const [rows] = await pool.execute(
+        'SELECT id, slug, name FROM cafes WHERE is_active = TRUE ORDER BY id ASC LIMIT 1'
+      );
+      return rows.length > 0 ? rows[0] : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
    * Get active cafes only
    */
   static async getActive() {

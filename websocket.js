@@ -1,28 +1,28 @@
 const WebSocket = require('ws');
+const logger = require('./config/logger');
 
 class WebSocketManager {
   constructor(server) {
-    this.wss = new WebSocket.Server({ 
+    this.wss = new WebSocket.Server({
       server,
       path: '/ws/orders'
     });
     this.clients = new Set();
-    
+
     this.wss.on('connection', (ws, req) => {
-      console.log('[WebSocket] New client connected');
+      logger.debug('WebSocket client connected');
       this.clients.add(ws);
-      
+
       ws.on('close', (code, reason) => {
-        console.log('[WebSocket] Client disconnected', { code, reason: reason?.toString() });
+        logger.debug('WebSocket client disconnected', { code });
         this.clients.delete(ws);
       });
-      
+
       ws.on('error', (error) => {
-        console.error('[WebSocket] Connection error:', error.message);
+        logger.warn('WebSocket connection error', { message: error.message });
         this.clients.delete(ws);
       });
-      
-      // Send initial connection confirmation
+
       try {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
@@ -31,12 +31,12 @@ class WebSocketManager {
           }));
         }
       } catch (error) {
-        console.error('[WebSocket] Error sending initial message:', error);
+        logger.error('WebSocket error sending initial message', { message: error.message });
       }
     });
 
     this.wss.on('error', (error) => {
-      console.error('[WebSocket] Server error:', error);
+      logger.error('WebSocket server error', { message: error.message });
     });
   }
   
@@ -53,7 +53,7 @@ class WebSocketManager {
         try {
           client.send(message);
         } catch (error) {
-          console.error('Error sending WebSocket message:', error);
+          logger.warn('WebSocket send error', { message: error.message });
           this.clients.delete(client);
         }
       }

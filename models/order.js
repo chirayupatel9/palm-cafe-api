@@ -1,11 +1,17 @@
 const { pool } = require('../config/database');
 const CafeDailyMetrics = require('./cafeDailyMetrics');
+const logger = require('../config/logger');
 
 class Order {
-  // Get all orders (optionally scoped by cafeId for multi-cafe)
-  static async getAll(cafeId = null) {
+  // Get all orders (optionally scoped by cafeId for multi-cafe; optional limit/offset)
+  static async getAll(cafeId = null, options = {}) {
     try {
       const hasCafeId = cafeId != null;
+      const limit = options.limit != null && options.limit > 0 ? Math.min(options.limit, 100) : null;
+      const offset = options.offset != null && options.offset >= 0 ? options.offset : 0;
+      const params = hasCafeId ? [cafeId] : [];
+      if (limit != null) params.push(limit, offset);
+      const limitClause = limit != null ? ' LIMIT ? OFFSET ?' : '';
       const [rows] = await pool.execute(
         `SELECT 
           o.id,
@@ -47,8 +53,8 @@ class Order {
         LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
         ${hasCafeId ? 'WHERE o.cafe_id = ?' : ''}
         GROUP BY o.id
-        ORDER BY o.created_at DESC`,
-        hasCafeId ? [cafeId] : []
+        ORDER BY o.created_at DESC${limitClause}`,
+        params
       );
       
       const result = rows.map(order => {
@@ -91,7 +97,7 @@ class Order {
       
       return result;
     } catch (error) {
-      console.error('Error in getAll:', error);
+      logger.error('Error in getAll:', error);
       throw new Error(`Error fetching orders: ${error.message}`);
     }
   }
@@ -297,14 +303,14 @@ class Order {
         const orderDate = new Date(result.created_at).toISOString().split('T')[0];
         CafeDailyMetrics.incrementOrder(cafeId, orderDate, parseFloat(safeFinalAmount || 0), false)
           .catch(err => {
-            console.error('Error updating analytics metrics:', err);
+            logger.error('Error updating analytics metrics:', err);
             // Don't throw - aggregation failures shouldn't break order creation
           });
       }
       
       return result;
     } catch (error) {
-      console.error('Error creating order:', error);
+      logger.error('Error creating order:', error);
       await connection.rollback();
       throw new Error(`Error creating order: ${error.message}`);
     } finally {
@@ -347,7 +353,7 @@ class Order {
           // Status changed to/from completed - update metrics
           CafeDailyMetrics.updateOrderCompletion(orderCafeId, orderDate, finalAmount, isNowCompleted)
             .catch(err => {
-              console.error('Error updating analytics metrics:', err);
+              logger.error('Error updating analytics metrics:', err);
               // Don't throw - aggregation failures shouldn't break order updates
             });
         }
@@ -456,7 +462,7 @@ class Order {
       const result = await this.getById(id, cafeId);
       return result;
     } catch (error) {
-      console.error('Error updating order:', error);
+      logger.error('Error updating order:', error);
       await connection.rollback();
       throw new Error(`Error updating order: ${error.message}`);
     } finally {

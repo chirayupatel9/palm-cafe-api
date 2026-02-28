@@ -1,9 +1,11 @@
 const { pool } = require('../config/database');
 
 class Customer {
-  // Get all customers (optionally filtered by cafe_id)
-  static async getAll(cafeId = null) {
+  // Get all customers (optionally filtered by cafe_id; optional limit/offset)
+  static async getAll(cafeId = null, options = {}) {
     try {
+      const limit = options.limit != null && options.limit > 0 ? Math.min(options.limit, 100) : null;
+      const offset = options.offset != null && options.offset >= 0 ? options.offset : 0;
       // Check if cafe_id column exists
       const [columns] = await pool.execute(`
         SELECT COLUMN_NAME 
@@ -26,6 +28,12 @@ class Customer {
         // If cafe_id column exists but no cafeId provided, return empty array
         return [];
       }
+
+      let limitClause = '';
+      if (limit != null) {
+        limitClause = ' LIMIT ? OFFSET ?';
+        params.push(limit, offset);
+      }
       
       const [rows] = await pool.execute(`
         SELECT 
@@ -35,7 +43,7 @@ class Customer {
           created_at, updated_at
         FROM customers
         ${whereClause}
-        ORDER BY name ASC
+        ORDER BY name ASC${limitClause}
       `, params);
 
       return rows.map(customer => ({

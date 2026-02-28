@@ -14,12 +14,12 @@ const DB_PORT = process.env.DB_PORT || 3306;
  */
 function getMigrationRun(mod) {
   if (typeof mod === 'function') return mod;
-  return mod.runMigration || mod.run || mod.migrateCafeSettings || mod.migrateTabVisibility ||
+  return mod.runMigration || mod.run || mod.addPerformanceIndexesMigration || mod.addCategoriesUniqueMigration || mod.migrateCafeSettings || mod.migrateTabVisibility ||
     mod.migrateColorScheme || mod.addSurfaceColorsMigration || mod.addMenuImagesMigration ||
     mod.addChefVisibilityMigration || mod.addChefReceptionRolesMigration ||
     mod.addReceptionSettingsMigration || mod.addSuperadminMigration ||
     mod.addPrinterSettingsMigration || mod.addTableNumberField || mod.addFeaturedPriorityMigration ||
-    mod.addCafeBrandingImagesMigration || mod.addPromoBannersMigration || mod.addExtraChargeFields ||
+    mod.addCafeBrandingImagesMigration || mod.addPromoBannersMigration || mod.addCategoriesUniqueMigration || mod.addExtraChargeFields ||
     mod.addIncludeTaxToggle || mod.addPaymentMethodsAndTaxSettings || mod.addPointsAwardedField;
 }
 
@@ -54,7 +54,9 @@ const MIGRATION_ORDER = [
   '025-add-featured-priority',
   '026-add-cafe-branding-images',
   '027-add-impersonation-audit-log',
-  '028-add-promo-banners'
+  '028-add-promo-banners',
+  '029-add-categories-unique',
+  '030-add-performance-indexes'
 ];
 
 async function runMigrations() {

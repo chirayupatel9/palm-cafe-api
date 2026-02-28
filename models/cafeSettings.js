@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const logger = require('../config/logger');
 
 class CafeSettings {
   // Get current cafe settings
@@ -40,7 +41,7 @@ class CafeSettings {
         // - Default settings retrieval
         // Only warn in development to reduce noise
         if (process.env.NODE_ENV !== 'production') {
-          console.debug('cafe_id column exists but no cafeId provided to getCurrent() - returning default settings');
+          logger.debug('cafe_id column exists but no cafeId provided to getCurrent() - returning default settings');
         }
         // Return default settings instead of potentially wrong cafe's settings
         return this.getDefaultSettings();
@@ -63,16 +64,15 @@ class CafeSettings {
       
       // Verify cafe_id matches if both are provided and cafe_id column exists
       if (hasCafeIdColumn && cafeId && settings.cafe_id && settings.cafe_id !== cafeId) {
-        console.error(`[CafeSettings.getCurrent] ERROR: cafe_id mismatch! Requested: ${cafeId}, Got: ${settings.cafe_id}`);
-        // Return default settings instead of wrong data
-        console.warn(`[CafeSettings.getCurrent] Returning default settings due to cafe_id mismatch`);
+        logger.error('CafeSettings.getCurrent cafe_id mismatch', { requested: cafeId, got: settings.cafe_id });
+        logger.warn('CafeSettings.getCurrent returning default settings due to cafe_id mismatch');
         return this.getDefaultSettings();
       }
 
       return settings;
     } catch (error) {
       // If there's an error (e.g., table doesn't exist), return default settings
-      console.warn('Error fetching cafe settings, returning defaults:', error.message);
+      logger.warn('Error fetching cafe settings, returning defaults', { message: error.message });
       return this.getDefaultSettings();
     }
   }
@@ -262,7 +262,7 @@ class CafeSettings {
         insertColumns.push('cafe_id');
         insertPlaceholders.push('?');
         insertValues.push(settingsData.cafe_id);
-        console.log('[CafeSettings.update] Including cafe_id in insert:', settingsData.cafe_id);
+        logger.debug('[CafeSettings.update] Including cafe_id in insert:', settingsData.cafe_id);
       }
 
       // Check if we should update existing record or create new one
@@ -271,7 +271,7 @@ class CafeSettings {
       let existingSettingsId = null;
       
       if (hasCafeIdColumn && settingsData.cafe_id) {
-        // Check if active settings exist for this cafe
+        // Multi-cafe: only touch this cafe's row
         const [existing] = await connection.execute(
           'SELECT id FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE LIMIT 1',
           [settingsData.cafe_id]
@@ -280,22 +280,22 @@ class CafeSettings {
         if (existing.length > 0) {
           shouldUpdate = true;
           existingSettingsId = existing[0].id;
-          console.log('[CafeSettings.update] Updating existing settings record ID:', existingSettingsId);
+          logger.debug('[CafeSettings.update] Updating existing settings record ID:', existingSettingsId);
         } else {
-          console.log('[CafeSettings.update] No active settings found, creating new record');
+          logger.debug('[CafeSettings.update] No active settings found, creating new record');
         }
-      } else {
-        // Legacy: no cafe_id column, check if any active settings exist
+      } else if (!hasCafeIdColumn) {
+        // Legacy: table has no cafe_id column, single global row
         const [existing] = await connection.execute(
           'SELECT id FROM cafe_settings WHERE is_active = TRUE LIMIT 1'
         );
-        
         if (existing.length > 0) {
           shouldUpdate = true;
           existingSettingsId = existing[0].id;
-          console.log('[CafeSettings.update] Updating existing settings record ID:', existingSettingsId);
+          logger.debug('[CafeSettings.update] Updating existing settings record ID (legacy):', existingSettingsId);
         }
       }
+      // If hasCafeIdColumn but no settingsData.cafe_id: do not update any row (route should send cafe_id)
       
       if (shouldUpdate && existingSettingsId) {
         // UPDATE existing record instead of creating new one
@@ -317,13 +317,14 @@ class CafeSettings {
         
         if (updateFields.length > 0) {
           updateValues.push(existingSettingsId);
-          
-          const updateQuery = `
-            UPDATE cafe_settings 
-            SET ${updateFields.join(', ')}
-            WHERE id = ?
-          `;
-          
+          // Scope by cafe_id so we never update another cafe's row (multi-cafe safety)
+          const hasCafeIdInUpdate = hasCafeIdColumn && settingsData.cafe_id;
+          if (hasCafeIdInUpdate) {
+            updateValues.push(settingsData.cafe_id);
+          }
+          const updateQuery = hasCafeIdInUpdate
+            ? `UPDATE cafe_settings SET ${updateFields.join(', ')} WHERE id = ? AND cafe_id = ?`
+            : `UPDATE cafe_settings SET ${updateFields.join(', ')} WHERE id = ?`;
           await connection.execute(updateQuery, updateValues);
         }
       } else {
@@ -405,7 +406,7 @@ class CafeSettings {
       return await this.getCurrent(cafeId);
     } catch (error) {
       await connection.rollback();
-      console.error('Error in cafe settings update:', error);
+      logger.error('Error in cafe settings update:', error);
       throw new Error(`Error updating cafe settings: ${error.message}`);
     } finally {
       connection.release();
@@ -424,7 +425,7 @@ class CafeSettings {
       `);
       
       if (tables.length === 0) {
-        console.warn('cafe_settings_history table does not exist, returning empty array');
+        logger.warn('cafe_settings_history table does not exist, returning empty array');
         return [];
       }
       
@@ -433,7 +434,7 @@ class CafeSettings {
       );
       return rows;
     } catch (error) {
-      console.warn('Error fetching cafe settings history:', error.message);
+      logger.warn('Error fetching cafe settings history:', error.message);
       return [];
     }
   }
@@ -441,7 +442,7 @@ class CafeSettings {
   // Upload logo
   static async updateLogo(logoUrl, cafeId = null) {
     try {
-      console.log('[CafeSettings.updateLogo] Starting update', { logoUrl, cafeId });
+      logger.debug('[CafeSettings.updateLogo] Starting update', { logoUrl, cafeId });
       const currentSettings = await this.getCurrent(cafeId);
       const updatedSettings = {
         ...currentSettings,
@@ -455,10 +456,10 @@ class CafeSettings {
       }
       
       const result = await this.update(updatedSettings);
-      console.log('[CafeSettings.updateLogo] Update successful', { cafeId, logoUrl });
+      logger.debug('[CafeSettings.updateLogo] Update successful', { cafeId, logoUrl });
       return result;
     } catch (error) {
-      console.error('[CafeSettings.updateLogo] Error:', error);
+      logger.error('[CafeSettings.updateLogo] Error:', error);
       throw new Error(`Error updating logo: ${error.message}`);
     }
   }
@@ -466,7 +467,7 @@ class CafeSettings {
   // Update hero image
   static async updateHeroImage(heroImageUrl, cafeId = null) {
     try {
-      console.log('[CafeSettings.updateHeroImage] Starting update', { heroImageUrl, cafeId });
+      logger.debug('[CafeSettings.updateHeroImage] Starting update', { heroImageUrl, cafeId });
       const currentSettings = await this.getCurrent(cafeId);
       const updatedSettings = {
         ...currentSettings,
@@ -480,10 +481,10 @@ class CafeSettings {
       }
       
       const result = await this.update(updatedSettings);
-      console.log('[CafeSettings.updateHeroImage] Update successful', { cafeId, heroImageUrl });
+      logger.debug('[CafeSettings.updateHeroImage] Update successful', { cafeId, heroImageUrl });
       return result;
     } catch (error) {
-      console.error('[CafeSettings.updateHeroImage] Error:', error);
+      logger.error('[CafeSettings.updateHeroImage] Error:', error);
       throw new Error(`Error updating hero image: ${error.message}`);
     }
   }
@@ -491,7 +492,7 @@ class CafeSettings {
   // Update promo banner image
   static async updatePromoBannerImage(promoBannerImageUrl, cafeId = null) {
     try {
-      console.log('[CafeSettings.updatePromoBannerImage] Starting update', { promoBannerImageUrl, cafeId });
+      logger.debug('[CafeSettings.updatePromoBannerImage] Starting update', { promoBannerImageUrl, cafeId });
       const currentSettings = await this.getCurrent(cafeId);
       const updatedSettings = {
         ...currentSettings,
@@ -505,10 +506,10 @@ class CafeSettings {
       }
       
       const result = await this.update(updatedSettings);
-      console.log('[CafeSettings.updatePromoBannerImage] Update successful', { cafeId, promoBannerImageUrl });
+      logger.debug('[CafeSettings.updatePromoBannerImage] Update successful', { cafeId, promoBannerImageUrl });
       return result;
     } catch (error) {
-      console.error('[CafeSettings.updatePromoBannerImage] Error:', error);
+      logger.error('[CafeSettings.updatePromoBannerImage] Error:', error);
       throw new Error(`Error updating promo banner image: ${error.message}`);
     }
   }
