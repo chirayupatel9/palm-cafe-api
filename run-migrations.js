@@ -10,16 +10,20 @@ const DB_NAME = process.env.DB_NAME || 'cafe_app';
 const DB_PORT = process.env.DB_PORT || 3306;
 
 /**
- * Get the run function from a migration module (supports various export patterns).
+ * Resolve a migration module to its executable run function.
+ *
+ * Searches common migration export names and returns the first matching callable.
+ * @param {*} mod - The migration module or function export to resolve.
+ * @returns {Function|undefined} The migration's run function if found, `undefined` otherwise.
  */
 function getMigrationRun(mod) {
   if (typeof mod === 'function') return mod;
-  return mod.runMigration || mod.run || mod.migrateCafeSettings || mod.migrateTabVisibility ||
+  return mod.runMigration || mod.run || mod.addPerformanceIndexesMigration || mod.addCategoriesUniqueMigration || mod.migrateCafeSettings || mod.migrateTabVisibility ||
     mod.migrateColorScheme || mod.addSurfaceColorsMigration || mod.addMenuImagesMigration ||
     mod.addChefVisibilityMigration || mod.addChefReceptionRolesMigration ||
     mod.addReceptionSettingsMigration || mod.addSuperadminMigration ||
     mod.addPrinterSettingsMigration || mod.addTableNumberField || mod.addFeaturedPriorityMigration ||
-    mod.addCafeBrandingImagesMigration || mod.addPromoBannersMigration || mod.addExtraChargeFields ||
+    mod.addCafeBrandingImagesMigration || mod.addPromoBannersMigration || mod.addCategoriesUniqueMigration || mod.addExtraChargeFields ||
     mod.addIncludeTaxToggle || mod.addPaymentMethodsAndTaxSettings || mod.addPointsAwardedField;
 }
 
@@ -54,9 +58,22 @@ const MIGRATION_ORDER = [
   '025-add-featured-priority',
   '026-add-cafe-branding-images',
   '027-add-impersonation-audit-log',
-  '028-add-promo-banners'
+  '028-add-promo-banners',
+  '029-add-categories-unique',
+  '030-add-performance-indexes'
 ];
 
+/**
+ * Apply ordered migration scripts to the configured MySQL database and record each successful execution.
+ *
+ * Connects to the database using environment-configured connection values, ensures a `migrations` tracking
+ * table exists, and then iterates through MIGRATION_ORDER. For each migration it skips ones already recorded,
+ * loads the migration file if present, resolves its run function, executes it, and inserts a record on success.
+ * The database connection is closed when processing finishes or on error.
+ *
+ * @throws {Error} If a migration module does not expose a runnable function.
+ * @throws {Error} If any migration or database operation fails; the original error is rethrown.
+ */
 async function runMigrations() {
   let connection;
 
