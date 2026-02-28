@@ -2168,11 +2168,23 @@ app.get('/api/cafe-settings/history', auth, async (req, res) => {
 // Upload cafe logo
 app.post('/api/cafe-settings/logo', auth, imageUpload.single('logo'), async (req, res) => {
   try {
-    logger.info('[UPLOAD LOGO] Request received', { 
-      hasFile: !!req.file, 
-      userId: req.user?.id, 
-      cafeId: req.user?.cafe_id,
-      impersonating: req.impersonation?.isImpersonating 
+    // Super admin can pass cafeId in body/query for the cafe they are editing
+    let cafeId = null;
+    if (req.user?.role === 'superadmin' && (req.body?.cafeId != null || req.query?.cafeId != null)) {
+      const raw = req.body?.cafeId != null ? req.body.cafeId : req.query.cafeId;
+      cafeId = parseInt(raw, 10);
+      if (Number.isNaN(cafeId)) {
+        return res.status(400).json({ error: 'Invalid cafeId for logo upload' });
+      }
+    } else {
+      cafeId = req.user?.cafe_id;
+    }
+
+    logger.info('[UPLOAD LOGO] Request received', {
+      hasFile: !!req.file,
+      userId: req.user?.id,
+      cafeId,
+      impersonating: req.impersonation?.isImpersonating
     });
 
     if (!req.file) {
@@ -2180,11 +2192,9 @@ app.post('/api/cafe-settings/logo', auth, imageUpload.single('logo'), async (req
       return res.status(400).json({ error: 'No logo file uploaded' });
     }
 
-    // Extract cafe_id from user context
-    const cafeId = req.user?.cafe_id;
     if (!cafeId) {
-      logger.error('[UPLOAD LOGO] No cafe_id in user context', { user: req.user });
-      return res.status(400).json({ error: 'User must be associated with a cafe' });
+      logger.error('[UPLOAD LOGO] No cafe_id in context', { user: req.user });
+      return res.status(400).json({ error: 'User must be associated with a cafe or provide cafeId (super admin)' });
     }
 
     logger.info('[UPLOAD LOGO] Cafe ID:', cafeId);
