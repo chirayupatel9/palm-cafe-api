@@ -416,6 +416,7 @@ const generateThermalPrintContent = async (order) => {
   content += '='.repeat(32) + '\n';
   content += '\n\n\n\n\n'; // Extra spacing for thermal printer
   
+  
   return content;
 };
 };
