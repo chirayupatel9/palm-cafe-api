@@ -1,7 +1,32 @@
+const path = require('path');
 const PDFDocument = require('pdfkit');
 const CurrencySettings = require('../models/currencySettings');
 const CafeSettings = require('../models/cafeSettings');
 const logger = require('../config/logger');
+
+const PUBLIC_ROOT = path.resolve(__dirname, '..', 'public');
+const PUBLIC_IMAGES = path.resolve(__dirname, '..', 'public', 'images');
+
+/**
+ * Resolve logo_url to a safe filesystem path under public (or public/images).
+ * Returns null if invalid or if path would escape the allowed directory.
+ * @param {string|null|undefined} logoUrl - Value from cafeSettings.logo_url
+ * @returns {string|null} Absolute path safe for doc.image, or null
+ */
+function resolveLogoPath(logoUrl) {
+  if (!logoUrl || typeof logoUrl !== 'string') return null;
+  const trimmed = logoUrl.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes('\\')) return null;
+  const baseDir = trimmed.startsWith('/') ? PUBLIC_ROOT : PUBLIC_IMAGES;
+  const relativePart = trimmed.startsWith('/') ? trimmed.slice(1) : trimmed;
+  const normalized = path.normalize(relativePart);
+  if (normalized.includes('..')) return null;
+  const resolved = path.resolve(baseDir, normalized);
+  const rel = path.relative(baseDir, resolved);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  return resolved;
+}
 
 /**
  * Generate a PDF invoice as base64 string.
@@ -79,11 +104,8 @@ async function generatePDF(invoice) {
     doc.rect(0, 0, pageWidth, 70).fill('#f4e1ba');
 
     try {
-      const logoUrl = cafeSettings.logo_url;
-      if (logoUrl && typeof logoUrl === 'string') {
-        const logoPath = logoUrl.startsWith('/') ?
-          `./public${logoUrl}` :
-          `./public/images/${logoUrl}`;
+      const logoPath = resolveLogoPath(cafeSettings.logo_url);
+      if (logoPath) {
         doc.image(logoPath, margin, 10, { width: 50, height: 50 });
       } else {
         throw new Error('No logo URL');
@@ -199,10 +221,12 @@ async function generatePDF(invoice) {
     doc.rect(0, footerY, pageWidth, 60).fill('#153059');
 
     try {
-      const logoPath = cafeSettings.logo_url.startsWith('/') ?
-        `./public${cafeSettings.logo_url}` :
-        `./public/images/${cafeSettings.logo_url}`;
-      doc.image(logoPath, margin, footerY + 5, { width: 15, height: 15 });
+      const logoPath = resolveLogoPath(cafeSettings.logo_url);
+      if (logoPath) {
+        doc.image(logoPath, margin, footerY + 5, { width: 15, height: 15 });
+      } else {
+        throw new Error('No logo');
+      }
     } catch (error) {
       doc.circle(margin + 7, footerY + 12, 7).fill('#f4e1ba');
     }
