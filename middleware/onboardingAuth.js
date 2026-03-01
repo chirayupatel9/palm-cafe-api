@@ -1,4 +1,5 @@
 const Cafe = require('../models/cafe');
+const logger = require('../config/logger');
 
 /**
  * Middleware to check if cafe has completed onboarding
@@ -47,7 +48,7 @@ const requireOnboarding = async (req, res, next) => {
     // Cafe is onboarded, proceed
     next();
   } catch (error) {
-    console.error('Onboarding check error:', error);
+    logger.error('Onboarding check error', { message: error.message });
     return res.status(500).json({ error: 'Error checking onboarding status' });
   }
 };

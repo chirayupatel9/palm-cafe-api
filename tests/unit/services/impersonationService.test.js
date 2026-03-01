@@ -5,7 +5,9 @@ const mockExecute = jest.fn();
 jest.mock('../../../config/database', () => ({
   pool: { execute: (...args) => mockExecute(...args) }
 }));
+jest.mock('../../../config/logger', () => ({ error: jest.fn(), warn: jest.fn(), info: jest.fn() }));
 
+const logger = require('../../../config/logger');
 const {
   logImpersonationEvent,
   getImpersonationAuditLog,
@@ -15,8 +17,8 @@ const {
 describe('impersonationService', () => {
   beforeEach(() => {
     mockExecute.mockReset();
-    console.warn = jest.fn();
-    console.error = jest.fn();
+    logger.warn.mockClear();
+    logger.error.mockClear();
   });
 
   describe('ACTION_TYPES', () => {
@@ -46,7 +48,7 @@ describe('impersonationService', () => {
       mockExecute.mockResolvedValueOnce([[]]);
       const result = await logImpersonationEvent(1, 'a@b.com', 1, 's', 'S', ACTION_TYPES.IMPERSONATION_ENDED);
       expect(result).toEqual({ success: true, skipped: true });
-      expect(console.warn).toHaveBeenCalledWith('impersonation_audit_log table does not exist, skipping audit log');
+      expect(logger.warn).toHaveBeenCalledWith('impersonation_audit_log table does not exist, skipping audit log');
       expect(mockExecute).toHaveBeenCalledTimes(1);
     });
 
@@ -63,7 +65,7 @@ describe('impersonationService', () => {
         .mockRejectedValue(new Error('DB fail'));
       const result = await logImpersonationEvent(1, 'a@b.com', 1, 's', 'S', ACTION_TYPES.IMPERSONATION_STARTED);
       expect(result).toEqual({ success: false, error: 'DB fail' });
-      expect(console.error).toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalled();
     });
   });
 

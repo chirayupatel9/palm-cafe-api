@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/user');
 const { auth, chefAuth, JWT_SECRET } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimiter');
+const { accountLockout, recordFailedAttempt, clearAttempts } = require('../middleware/accountLockout');
 const { registerValidation, loginValidation, handleValidationErrors } = require('../middleware/validateAuth');
 const logger = require('../config/logger');
 
@@ -131,21 +132,24 @@ module.exports = function registerAuth(app) {
 
   // Login, profile, server time, cors-test are registered after superadmin in main index order;
   // we register them here in auth.js so all auth-related routes live together
-  app.post('/api/auth/login', authLimiter, loginValidation, handleValidationErrors, async (req, res) => {
+  app.post('/api/auth/login', authLimiter, accountLockout, loginValidation, handleValidationErrors, async (req, res) => {
     try {
       const { email, password } = req.body;
 
       const user = await User.findByIdWithCafe((await User.findByEmail(email))?.id);
       if (!user) {
+        recordFailedAttempt(req);
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
       const userWithPassword = await User.findByEmail(email);
       const isValidPassword = await User.validatePassword(userWithPassword, password);
       if (!isValidPassword) {
+        recordFailedAttempt(req);
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
+      clearAttempts(req);
       await User.updateLastLogin(user.id);
 
       const now = Math.floor(Date.now() / 1000);

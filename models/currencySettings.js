@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const logger = require('../config/logger');
 
 class CurrencySettings {
   // Optional cafeId for multi-cafe; when provided, scope by cafe_id.
@@ -14,7 +15,7 @@ class CurrencySettings {
       const [rows] = await pool.execute(sql, params);
       return rows[0] || { currency_code: 'INR', currency_symbol: '₹', currency_name: 'Indian Rupee' };
     } catch (error) {
-      console.error('Error getting current currency settings:', error);
+      logger.error('Error getting current currency settings', { message: error.message });
       throw error;
     }
   }
@@ -38,7 +39,7 @@ class CurrencySettings {
       );
       return { id: result.insertId, ...settings, is_active: true };
     } catch (error) {
-      console.error('Error updating currency settings:', error);
+      logger.error('Error updating currency settings', { message: error.message });
       throw error;
     }
   }
@@ -56,7 +57,7 @@ class CurrencySettings {
       const [rows] = await pool.execute(sql, params);
       return rows;
     } catch (error) {
-      console.error('Error getting currency history:', error);
+      logger.error('Error getting currency history', { message: error.message });
       throw error;
     }
   }

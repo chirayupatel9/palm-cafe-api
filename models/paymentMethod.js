@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const logger = require('../config/logger');
 
 class PaymentMethod {
   // Get all payment methods (filtered by cafeId if provided)
@@ -419,7 +420,7 @@ class PaymentMethod {
         }
       }
     } catch (error) {
-      console.error('Error initializing default payment methods:', error);
+      logger.error('Error initializing default payment methods', { message: error.message });
     }
   }
 }

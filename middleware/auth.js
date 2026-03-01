@@ -1,10 +1,14 @@
 require('dotenv').config();
 const jwt = require('jsonwebtoken');
 const User = require('../models/user');
-const { requireEnv } = require('../config/env');
+const { requireEnv, JWT_SECRET_MIN_LENGTH } = require('../config/env');
 
 const raw = requireEnv('JWT_SECRET');
 const JWT_SECRET = (raw && String(raw).trim()) ? raw : (process.env.NODE_ENV === 'production' ? (() => { throw new Error('JWT_SECRET must be set in production'); })() : 'dev-secret-change-in-production');
+
+if (process.env.NODE_ENV === 'production' && JWT_SECRET.length < JWT_SECRET_MIN_LENGTH) {
+  throw new Error(`JWT_SECRET must be at least ${JWT_SECRET_MIN_LENGTH} characters in production`);
+}
 
 const auth = async (req, res, next) => {
   try {

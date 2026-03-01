@@ -5,7 +5,9 @@ const mockExecute = jest.fn();
 jest.mock('../../../config/database', () => ({
   pool: { execute: (...args) => mockExecute(...args) }
 }));
+jest.mock('../../../config/logger', () => ({ error: jest.fn(), warn: jest.fn(), info: jest.fn() }));
 
+const logger = require('../../../config/logger');
 const {
   ACTION_TYPES,
   logAuditEvent,
@@ -17,7 +19,7 @@ const {
 describe('auditService', () => {
   beforeEach(() => {
     mockExecute.mockReset();
-    console.error = jest.fn();
+    logger.error.mockClear();
   });
 
   describe('ACTION_TYPES', () => {
@@ -61,7 +63,7 @@ describe('auditService', () => {
       mockExecute.mockRejectedValue(new Error('DB error'));
       const result = await logAuditEvent(1, ACTION_TYPES.PLAN_CHANGED, 'a', 'b');
       expect(result).toEqual({ success: false, error: 'DB error' });
-      expect(console.error).toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalled();
     });
   });
 

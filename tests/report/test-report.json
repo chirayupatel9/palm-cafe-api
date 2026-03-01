@@ -3,11 +3,11 @@
   "passed": 974,
   "failed": 0,
   "coverage": {
-    "lines": 80.99,
-    "functions": 83.78,
-    "branches": 62.61,
-    "statements": 80.37
+    "lines": 70.01,
+    "functions": 80.12,
+    "branches": 58.79,
+    "statements": 69.94
   },
-  "durationMs": 6828,
-  "timestamp": "2026-03-01T18:22:28.220Z"
+  "durationMs": 7643,
+  "timestamp": "2026-03-01T20:26:49.689Z"
 }

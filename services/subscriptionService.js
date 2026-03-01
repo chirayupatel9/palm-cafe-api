@@ -1,6 +1,7 @@
 const Cafe = require('../models/cafe');
 const featureService = require('./featureService');
 const auditService = require('./auditService');
+const logger = require('../config/logger');
 
 /**
  * Subscription Service
@@ -150,7 +151,7 @@ async function cafeHasModuleAccess(cafeId, module) {
     // Use the new feature service for consistency
     return await featureService.cafeHasFeature(cafeId, module);
   } catch (error) {
-    console.error('Error checking module access:', error);
+    logger.error('Error checking module access', { message: error.message });
     return false;
   }
 }

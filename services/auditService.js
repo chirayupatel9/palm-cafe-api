@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const logger = require('../config/logger');
 
 /**
  * Audit Service
@@ -31,8 +32,7 @@ async function logAuditEvent(cafeId, actionType, previousValue, newValue, change
 
     return { success: true };
   } catch (error) {
-    console.error('Error logging audit event:', error);
-    // Don't throw - audit logging should not break the main flow
+    logger.error('Error logging audit event', { message: error.message });
     return { success: false, error: error.message };
   }
 }

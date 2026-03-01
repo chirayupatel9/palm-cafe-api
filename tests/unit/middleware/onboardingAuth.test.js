@@ -2,8 +2,14 @@
  * Unit tests for onboardingAuth middleware. Cafe model mocked.
  */
 jest.mock('../../../models/cafe');
+jest.mock('../../../config/logger', () => ({
+  error: jest.fn(),
+  warn: jest.fn(),
+  info: jest.fn()
+}));
 
 const Cafe = require('../../../models/cafe');
+const logger = require('../../../config/logger');
 const { requireOnboarding, allowOnboardingRoutes } = require('../../../middleware/onboardingAuth');
 
 describe('onboardingAuth', () => {
@@ -16,7 +22,6 @@ describe('onboardingAuth', () => {
     req = {};
     res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
     next = jest.fn();
-    console.error = jest.fn();
   });
 
   describe('requireOnboarding', () => {
@@ -96,7 +101,7 @@ describe('onboardingAuth', () => {
       await requireOnboarding(req, res, next);
       expect(res.status).toHaveBeenCalledWith(500);
       expect(res.json).toHaveBeenCalledWith({ error: 'Error checking onboarding status' });
-      expect(console.error).toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith('Onboarding check error', expect.objectContaining({ message: 'DB fail' }));
     });
   });
 

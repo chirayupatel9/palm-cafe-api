@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const logger = require('../config/logger');
 
 /**
  * Impersonation Service
@@ -30,7 +31,7 @@ async function logImpersonationEvent(superAdminId, superAdminEmail, cafeId, cafe
     `);
 
     if (tables.length === 0) {
-      console.warn('impersonation_audit_log table does not exist, skipping audit log');
+      logger.warn('impersonation_audit_log table does not exist, skipping audit log');
       return { success: true, skipped: true };
     }
 
@@ -42,7 +43,7 @@ async function logImpersonationEvent(superAdminId, superAdminEmail, cafeId, cafe
 
     return { success: true };
   } catch (error) {
-    console.error('Error logging impersonation event:', error);
+    logger.error('Error logging impersonation event', { message: error.message });
     // Don't throw - audit logging should not break the main flow
     return { success: false, error: error.message };
   }
@@ -89,7 +90,7 @@ async function getImpersonationAuditLog(superAdminId = null, limit = 100, offset
     const [rows] = await pool.execute(query, params);
     return rows;
   } catch (error) {
-    console.error('Error fetching impersonation audit log:', error);
+    logger.error('Error fetching impersonation audit log', { message: error.message });
     throw new Error(`Error fetching impersonation audit log: ${error.message}`);
   }
 }
