@@ -1,8 +1,14 @@
 /**
- * GlobalTeardown: optional cleanup after all tests.
+ * GlobalTeardown: close MySQL pool so Jest can exit gracefully.
  * Does NOT drop the test database or tables - keeps test DB for next run.
- * Use for closing connections or logging if needed.
  */
 module.exports = async () => {
-  // No destructive cleanup; test DB remains for idempotent re-runs
+  try {
+    const { pool } = require('../config/database');
+    if (pool && typeof pool.end === 'function') {
+      await pool.end();
+    }
+  } catch (err) {
+    // Ignore if pool already closed or config not loaded
+  }
 };

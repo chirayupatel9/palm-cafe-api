@@ -87,8 +87,8 @@ describe('Superadmin API', () => {
         .post('/api/superadmin/cafes')
         .set('Authorization', `Bearer ${superadminToken}`)
         .send({ slug, name: 'Test Cafe' });
-      expect([201, 400]).toContain(res.status);
-      if (res.status === 201) expect(res.body.cafe).toHaveProperty('id');
+      expect(res.status).toBe(201);
+      expect(res.body.cafe).toHaveProperty('id');
     });
   });
 
@@ -309,8 +309,9 @@ describe('Superadmin API', () => {
       const res = await request(app)
         .get('/api/superadmin/audit-logs')
         .set('Authorization', `Bearer ${superadminToken}`);
-      expect([200]).toContain(res.status);
-      if (res.status === 200) expect(Array.isArray(res.body)).toBe(true);
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('auditLogs');
+      expect(Array.isArray(res.body.auditLogs)).toBe(true);
     });
   });
 
@@ -318,12 +319,14 @@ describe('Superadmin API', () => {
     it('returns 401 without auth', async () => {
       await request(app).get('/api/superadmin/cafes/1/audit-log').expect(401);
     });
-    it('returns 200 or 404 with superadmin', async () => {
+    it('returns 200 with superadmin when cafe exists', async () => {
       if (!superadminToken) return;
       const res = await request(app)
         .get('/api/superadmin/cafes/1/audit-log')
         .set('Authorization', `Bearer ${superadminToken}`);
-      expect([200, 404]).toContain(res.status);
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('auditLog');
+      expect(Array.isArray(res.body.auditLog)).toBe(true);
     });
   });
 });

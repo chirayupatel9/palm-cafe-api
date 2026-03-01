@@ -82,8 +82,9 @@ async function getImpersonationAuditLog(superAdminId = null, limit = 100, offset
       params.push(superAdminId);
     }
     
-    query += ' ORDER BY ial.created_at DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
+    const lim = Math.max(0, parseInt(limit, 10) || 0);
+    const off = Math.max(0, parseInt(offset, 10) || 0);
+    query += ` ORDER BY ial.created_at DESC LIMIT ${lim} OFFSET ${off}`;
 
     const [rows] = await pool.execute(query, params);
     return rows;

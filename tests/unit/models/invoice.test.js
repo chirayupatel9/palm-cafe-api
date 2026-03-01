@@ -54,7 +54,7 @@ describe('Invoice model', () => {
       const cols = ['invoice_number', 'customer_name', 'created_at', 'total_amount'].map(c => ({ COLUMN_NAME: c }));
       mockExecute.mockResolvedValueOnce([cols]).mockResolvedValueOnce([[{ invoice_number: '1', customer_name: 'X', created_at: null, total_amount: 10 }]]).mockResolvedValueOnce([[]]);
       await Invoice.getAll(null, { limit: 5, offset: 2 });
-      expect(mockExecute).toHaveBeenCalledWith(expect.stringContaining('LIMIT'), expect.arrayContaining([5, 2]));
+      expect(mockExecute).toHaveBeenCalledWith(expect.stringContaining('LIMIT 5 OFFSET 2'), expect.any(Array));
     });
     it('throws on DB error', async () => {
       mockExecute.mockRejectedValue(new Error('DB fail'));

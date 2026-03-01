@@ -31,12 +31,13 @@ class Customer {
 
       let limitClause = '';
       if (limit != null) {
-        limitClause = ' LIMIT ? OFFSET ?';
-        params.push(limit, offset);
+        const lim = Math.max(0, parseInt(limit, 10) || 0);
+        const off = Math.max(0, parseInt(offset, 10) || 0);
+        limitClause = ` LIMIT ${lim} OFFSET ${off}`;
       }
       
-      const [rows] = await pool.execute(`
-        SELECT 
+      const [rows] = await pool.execute(
+        `SELECT 
           id, name, email, phone, address, date_of_birth,
           loyalty_points, total_spent, visit_count,
           first_visit_date, last_visit_date, is_active, notes,
@@ -44,7 +45,9 @@ class Customer {
         FROM customers
         ${whereClause}
         ORDER BY name ASC${limitClause}
-      `, params);
+        `,
+        params
+      );
 
       return rows.map(customer => ({
         ...customer,

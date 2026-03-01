@@ -2,6 +2,7 @@ module.exports = {
   testEnvironment: 'node',
   testMatch: ['**/tests/**/*.test.js', '**/test/**/*.test.js'],
   setupFiles: ['<rootDir>/tests/setupEnv.js'],
+  setupFilesAfterEnv: ['<rootDir>/tests/closePoolAfterTests.js'],
   globalSetup: '<rootDir>/tests/setupDb.js',
   globalTeardown: '<rootDir>/tests/teardownDb.js',
   testTimeout: 15000,
@@ -23,7 +24,6 @@ module.exports = {
       statements: 80
     }
   },
-  forceExit: true,
   reporters: [
     'default',
     '<rootDir>/tests/reporters/testReportReporter.js'
