@@ -1,5 +1,16 @@
+/**
+ * Rate limiters. In production, general limit is 3000 req/5min per IP (tuned for customer traffic).
+ * Optional env: RATE_LIMIT_GENERAL_MAX, RATE_LIMIT_GENERAL_WINDOW_MS, RATE_LIMIT_AUTH_MAX, RATE_LIMIT_UPLOAD_MAX.
+ */
 const rateLimit = require('express-rate-limit');
 const logger = require('../config/logger');
+
+// Optional env overrides for high-traffic deployments (e.g. RATE_LIMIT_GENERAL_MAX=5000).
+const GENERAL_WINDOW_MS = Number(process.env.RATE_LIMIT_GENERAL_WINDOW_MS) || 5 * 60 * 1000;
+const GENERAL_MAX_PROD = Number(process.env.RATE_LIMIT_GENERAL_MAX) || 3000;
+const GENERAL_MAX_DEV = 10000;
+const AUTH_MAX_PROD = Number(process.env.RATE_LIMIT_AUTH_MAX) || 50;
+const UPLOAD_MAX = Number(process.env.RATE_LIMIT_UPLOAD_MAX) || 30;
 
 function baseOptions(overrides) {
   return {
@@ -10,15 +21,16 @@ function baseOptions(overrides) {
 }
 
 function createGeneralLimiter(store) {
+  const max = process.env.NODE_ENV === 'production' ? GENERAL_MAX_PROD : GENERAL_MAX_DEV;
   return rateLimit({
-    windowMs: 5 * 60 * 1000,
-    max: process.env.NODE_ENV === 'production' ? 500 : 10000,
-    message: { error: 'Too many requests from this IP, please try again later.', retryAfter: 900 },
+    windowMs: GENERAL_WINDOW_MS,
+    max,
+    message: { error: 'Too many requests from this IP, please try again later.', retryAfter: 300 },
     ...baseOptions({
       store: store || undefined,
       handler: (req, res) => {
         logger.warn('Rate limit exceeded', { ip: req.ip });
-        res.status(429).json({ error: 'Too many requests from this IP, please try again later.', retryAfter: 900 });
+        res.status(429).json({ error: 'Too many requests from this IP, please try again later.', retryAfter: 300 });
       }
     })
   });
@@ -27,13 +39,13 @@ function createGeneralLimiter(store) {
 function createAuthLimiter(store) {
   return rateLimit({
     windowMs: 5 * 60 * 1000,
-    max: process.env.NODE_ENV === 'production' ? 20 : 100,
-    message: { error: 'Too many authentication attempts, please try again later.', retryAfter: 900 },
+    max: process.env.NODE_ENV === 'production' ? AUTH_MAX_PROD : 100,
+    message: { error: 'Too many authentication attempts, please try again later.', retryAfter: 300 },
     ...baseOptions({
       store: store || undefined,
       handler: (req, res) => {
         logger.warn('Auth rate limit exceeded', { ip: req.ip });
-        res.status(429).json({ error: 'Too many authentication attempts, please try again later.', retryAfter: 900 });
+        res.status(429).json({ error: 'Too many authentication attempts, please try again later.', retryAfter: 300 });
       }
     })
   });
@@ -42,7 +54,7 @@ function createAuthLimiter(store) {
 function createUploadLimiter(store) {
   return rateLimit({
     windowMs: 60 * 60 * 1000,
-    max: 10,
+    max: UPLOAD_MAX,
     message: { error: 'Too many file uploads, please try again later.', retryAfter: 3600 },
     ...baseOptions({
       store: store || undefined,
@@ -57,13 +69,13 @@ function createUploadLimiter(store) {
 function createApiLimiter(store) {
   return rateLimit({
     windowMs: 5 * 60 * 1000,
-    max: 200,
-    message: { error: 'Too many API requests, please try again later.', retryAfter: 900 },
+    max: 500,
+    message: { error: 'Too many API requests, please try again later.', retryAfter: 300 },
     ...baseOptions({
       store: store || undefined,
       handler: (req, res) => {
         logger.warn('API rate limit exceeded', { ip: req.ip });
-        res.status(429).json({ error: 'Too many API requests, please try again later.', retryAfter: 900 });
+        res.status(429).json({ error: 'Too many API requests, please try again later.', retryAfter: 300 });
       }
     })
   });
