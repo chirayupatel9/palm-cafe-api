@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/user');
+const Cafe = require('../models/cafe');
 const { auth, chefAuth, JWT_SECRET } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimiter');
 const { accountLockout, recordFailedAttempt, clearAttempts } = require('../middleware/accountLockout');
@@ -10,14 +11,19 @@ module.exports = function registerAuth(app) {
   // Register new user
   app.post('/api/auth/register', authLimiter, registerValidation, handleValidationErrors, async (req, res) => {
     try {
-      const { username, email, password } = req.body;
+      const { username, email, password, cafe_id: bodyCafeId } = req.body;
 
       const existingUser = await User.findByEmail(email);
       if (existingUser) {
         return res.status(400).json({ error: 'User with this email already exists' });
       }
 
-      const user = await User.create({ username, email, password });
+      let cafeId = bodyCafeId != null ? parseInt(bodyCafeId, 10) : null;
+      if (cafeId == null || !Number.isInteger(cafeId)) {
+        const defaultCafe = await Cafe.getFirstActive();
+        if (defaultCafe) cafeId = defaultCafe.id;
+      }
+      const user = await User.create({ username, email, password, cafe_id: cafeId || undefined });
 
       const token = jwt.sign(
         {

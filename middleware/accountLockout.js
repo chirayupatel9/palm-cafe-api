@@ -22,7 +22,8 @@ function cleanup() {
   }
 }
 
-setInterval(cleanup, 60000);
+const cleanupTimer = setInterval(cleanup, 60000);
+if (cleanupTimer.unref) cleanupTimer.unref();
 
 function accountLockout(req, res, next) {
   const key = getKey(req);

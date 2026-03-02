@@ -1,13 +1,13 @@
 {
   "totalTests": 974,
-  "passed": 974,
-  "failed": 0,
+  "passed": 971,
+  "failed": 3,
   "coverage": {
-    "lines": 70.01,
-    "functions": 80.12,
-    "branches": 58.79,
-    "statements": 69.94
+    "lines": 69.95,
+    "functions": 79.95,
+    "branches": 58.67,
+    "statements": 69.9
   },
-  "durationMs": 7643,
-  "timestamp": "2026-03-01T20:26:49.689Z"
+  "durationMs": 7128,
+  "timestamp": "2026-03-01T21:03:13.377Z"
 }

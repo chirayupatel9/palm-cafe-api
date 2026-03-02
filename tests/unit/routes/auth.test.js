@@ -3,6 +3,7 @@
  */
 jest.mock('jsonwebtoken', () => ({ sign: jest.fn().mockReturnValue('mock-token'), verify: jest.fn() }));
 jest.mock('../../../models/user');
+jest.mock('../../../models/cafe', () => ({ getFirstActive: jest.fn().mockResolvedValue(null) }));
 jest.mock('../../../middleware/auth', () => ({ auth: (req, res, next) => next(), chefAuth: (req, res, next) => next() }));
 jest.mock('../../../middleware/rateLimiter', () => ({ authLimiter: (req, res, next) => next() }));
 jest.mock('../../../middleware/validateAuth', () => ({
@@ -55,7 +56,7 @@ describe('routes/auth', () => {
       const req = { body: { username: 'u', email: 'e@x.com', password: 'pass123' }, requestId: 'r1' };
       const res = mockRes();
       await handler(req, res);
-      expect(User.create).toHaveBeenCalledWith({ username: 'u', email: 'e@x.com', password: 'pass123' });
+      expect(User.create).toHaveBeenCalledWith(expect.objectContaining({ username: 'u', email: 'e@x.com', password: 'pass123' }));
       expect(res.status).toHaveBeenCalledWith(201);
       expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
         message: 'User registered successfully',

@@ -12,6 +12,7 @@
     "migrate:status": "node -e \"require('./run-migrations').runMigrations().then(() => console.log('Migrations up to date')).catch(console.error)\"",
     "lint": "node -e \"console.log('Lint placeholder; add ESLint when ready')\"",
     "test": "cross-env NODE_ENV=test jest",
+    "test:e2e": "cross-env NODE_ENV=test jest --config=jest.e2e.config.js",
     "test:coverage": "cross-env NODE_ENV=test jest --coverage"
   },
   "dependencies": {
