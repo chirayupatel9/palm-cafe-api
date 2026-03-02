@@ -17,8 +17,12 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';
 
-// Security headers (before other middleware)
-app.use(helmet({ contentSecurityPolicy: false }));
+// Security headers (before other middleware).
+// crossOriginResourcePolicy: cross-origin so the frontend (e.g. localhost:3000) can embed images from this API (localhost:5000).
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
 
 // Request ID for tracing (before other middleware so all logs can use it)
 app.use(requestIdMiddleware);
@@ -73,8 +77,13 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-// Serve static files from public directory
-app.use('/images', express.static(path.join(__dirname, 'public', 'images')));
+// Serve static files from public directory (same path as upload handlers in routes)
+const fs = require('fs');
+const { publicImagesDir } = require('./config/paths');
+if (!fs.existsSync(publicImagesDir)) {
+  fs.mkdirSync(publicImagesDir, { recursive: true });
+}
+app.use('/images', express.static(publicImagesDir));
 
 // Mount API routes
 const registerRoutes = require('./routes');
