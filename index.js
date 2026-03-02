@@ -1,13 +1,14 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const path = require('path');
 const morgan = require('morgan');
 const http = require('http');
 const WebSocketManager = require('./websocket');
-const { initializeDatabase, testConnection } = require('./config/database');
+const { initializeDatabase, testConnection, pool } = require('./config/database');
 const logger = require('./config/logger');
 const { generalLimiter } = require('./middleware/rateLimiter');
-const { validateProductionEnv } = require('./config/env');
+const { validateStartupEnv } = require('./config/env');
 const requestIdMiddleware = require('./middleware/requestId');
 const responseHelpersMiddleware = require('./routes/responseHelpers');
 const requestDurationLogger = require('./middleware/requestDurationLogger');
@@ -15,6 +16,9 @@ const requestDurationLogger = require('./middleware/requestDurationLogger');
 const app = express();
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';
+
+// Security headers (before other middleware)
+app.use(helmet({ contentSecurityPolicy: false }));
 
 // Request ID for tracing (before other middleware so all logs can use it)
 app.use(requestIdMiddleware);
@@ -34,7 +38,7 @@ app.use(cors({
       process.env.FRONTEND_URL,
       process.env.ADMIN_URL,
       // Fallback for development
-      ...(process.env.NODE_ENV === 'development' ? ['http://localhost:3000', 'http://localhost:3001'] : [])
+      ...((process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') ? ['http://localhost:3000', 'http://localhost:3001'] : [])
     ].filter(Boolean); // Remove null/undefined values
     
     // Check if origin is in allowed list
@@ -76,7 +80,7 @@ app.use('/images', express.static(path.join(__dirname, 'public', 'images')));
 const registerRoutes = require('./routes');
 registerRoutes(app);
 
-// Global error handler middleware (must be last)
+// Global error handler middleware (must be last). Never expose stack traces in production.
 app.use((err, req, res, next) => {
   const status = err.statusCode || err.status || 500;
   const requestId = req.requestId || null;
@@ -92,7 +96,8 @@ app.use((err, req, res, next) => {
   const isProduction = process.env.NODE_ENV === 'production';
   const body = {
     error: isProduction ? 'Internal server error' : (err.message || 'Internal server error'),
-    code: 'INTERNAL_ERROR'
+    code: err.code || 'INTERNAL_ERROR',
+    requestId: requestId || undefined
   };
   if (requestId) body.requestId = requestId;
   res.status(status).json(body);
@@ -108,70 +113,84 @@ app.use((req, res) => {
 });
 
 // Initialize database and start server
+let serverInstance = null;
+
 const startServer = async () => {
   try {
-    validateProductionEnv();
+    validateStartupEnv();
     process.env.TZ = 'UTC';
-    logger.info('🌍 Server timezone set to UTC for international compatibility');
-    
-    // Test database connection
+    logger.info('Timezone set to UTC');
+
+    await require('./lib/redis').connect();
+
     const dbConnected = await testConnection();
     if (!dbConnected) {
       logger.error('Failed to connect to database. Please check your database configuration.');
       process.exit(1);
     }
 
-    // Initialize database
     await initializeDatabase();
 
-    // Create HTTP server
     const server = http.createServer(app);
-    
-    // Initialize WebSocket manager
+    serverInstance = server;
+
     const wsManager = new WebSocketManager(server);
-    
-    // Make WebSocket manager available globally for broadcasting updates
     global.wsManager = wsManager;
-    
-    // Start server
+
     server.listen(PORT, HOST, () => {
-      logger.info(`Cafe Management server running on ${HOST}:${PORT}`);
-      logger.info(`API available at http://${HOST}:${PORT}/api`);
-      logger.info(`WebSocket available at ws://${HOST}:${PORT}/ws/orders`);
-      logger.info(`Local access: http://${HOST}:${PORT}/api`);
-      logger.info('Database connected and initialized successfully');
+      const safeConfig = {
+        NODE_ENV: process.env.NODE_ENV || 'development',
+        PORT,
+        HOST,
+        DB_HOST: process.env.DB_HOST ? '(set)' : '(not set)',
+        JWT_SECRET_SET: !!(process.env.JWT_SECRET && String(process.env.JWT_SECRET).trim())
+      };
+      logger.info('Server started', safeConfig);
+      logger.info(`API: http://${HOST}:${PORT}/api`);
+      logger.info(`WebSocket: ws://${HOST}:${PORT}/ws/orders`);
     });
   } catch (error) {
-    logger.error('Failed to start server:', error);
+    logger.error('Failed to start server', { message: error.message });
     process.exit(1);
   }
 };
 
-// Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  logger.error('Unhandled Rejection', { reason: String(reason) });
   if (process.env.NODE_ENV === 'production') {
     process.exit(1);
   }
 });
 
-// Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', error);
-  // Exit the process as the application is in an undefined state
+  logger.error('Uncaught Exception', { message: error.message });
   process.exit(1);
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM signal received: closing HTTP server');
-  process.exit(0);
-});
+function gracefulShutdown(signal) {
+  logger.info(`${signal} received: starting graceful shutdown`);
+  if (!serverInstance) {
+    process.exit(0);
+    return;
+  }
+  serverInstance.close(() => {
+    logger.info('HTTP server closed');
+    pool.end().then(() => {
+      logger.info('Database pool closed');
+      process.exit(0);
+    }).catch((err) => {
+      logger.error('Error closing database pool', { message: err.message });
+      process.exit(1);
+    });
+  });
+  setTimeout(() => {
+    logger.warn('Graceful shutdown timeout, forcing exit');
+    process.exit(1);
+  }, 30000);
+}
 
-process.on('SIGINT', () => {
-  logger.info('SIGINT signal received: closing HTTP server');
-  process.exit(0);
-});
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 if (require.main === module) {
   startServer();

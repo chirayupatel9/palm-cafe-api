@@ -51,14 +51,15 @@ class Cafe {
 
       let insertFields = 'slug, name, description, logo_url, address, phone, email, website, is_active, subscription_plan, subscription_status, enabled_modules';
       let insertValues = [
-        slug.toLowerCase(), 
-        name, 
-        description || null, 
-        logo_url || null, 
-        address || null, 
-        phone || null, 
-        email || null, 
+        slug.toLowerCase(),
+        name,
+        description || null,
+        logo_url || null,
+        address || null,
+        phone || null,
+        email || null,
         website || null,
+        true, // is_active
         subscription_plan || 'FREE',
         subscription_status || 'active',
         enabled_modules ? JSON.stringify(enabled_modules) : null

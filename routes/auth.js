@@ -1,7 +1,9 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/user');
+const Cafe = require('../models/cafe');
 const { auth, chefAuth, JWT_SECRET } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimiter');
+const { accountLockout, recordFailedAttempt, clearAttempts } = require('../middleware/accountLockout');
 const { registerValidation, loginValidation, handleValidationErrors } = require('../middleware/validateAuth');
 const logger = require('../config/logger');
 
@@ -9,14 +11,19 @@ module.exports = function registerAuth(app) {
   // Register new user
   app.post('/api/auth/register', authLimiter, registerValidation, handleValidationErrors, async (req, res) => {
     try {
-      const { username, email, password } = req.body;
+      const { username, email, password, cafe_id: bodyCafeId } = req.body;
 
       const existingUser = await User.findByEmail(email);
       if (existingUser) {
         return res.status(400).json({ error: 'User with this email already exists' });
       }
 
-      const user = await User.create({ username, email, password });
+      let cafeId = bodyCafeId != null ? parseInt(bodyCafeId, 10) : null;
+      if (cafeId == null || !Number.isInteger(cafeId)) {
+        const defaultCafe = await Cafe.getFirstActive();
+        if (defaultCafe) cafeId = defaultCafe.id;
+      }
+      const user = await User.create({ username, email, password, cafe_id: cafeId || undefined });
 
       const token = jwt.sign(
         {
@@ -131,21 +138,24 @@ module.exports = function registerAuth(app) {
 
   // Login, profile, server time, cors-test are registered after superadmin in main index order;
   // we register them here in auth.js so all auth-related routes live together
-  app.post('/api/auth/login', authLimiter, loginValidation, handleValidationErrors, async (req, res) => {
+  app.post('/api/auth/login', authLimiter, accountLockout, loginValidation, handleValidationErrors, async (req, res) => {
     try {
       const { email, password } = req.body;
 
       const user = await User.findByIdWithCafe((await User.findByEmail(email))?.id);
       if (!user) {
+        await recordFailedAttempt(req);
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
       const userWithPassword = await User.findByEmail(email);
       const isValidPassword = await User.validatePassword(userWithPassword, password);
       if (!isValidPassword) {
+        await recordFailedAttempt(req);
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
+      await clearAttempts(req);
       await User.updateLastLogin(user.id);
 
       const now = Math.floor(Date.now() / 1000);

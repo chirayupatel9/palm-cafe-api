@@ -101,8 +101,9 @@ class Invoice {
       }
 
       if (limit != null) {
-        query += ' LIMIT ? OFFSET ?';
-        params.push(limit, offset);
+        const lim = Math.max(0, parseInt(limit, 10) || 0);
+        const off = Math.max(0, parseInt(offset, 10) || 0);
+        query += ` LIMIT ${lim} OFFSET ${off}`;
       }
 
       const [invoices] = await pool.execute(query, params);

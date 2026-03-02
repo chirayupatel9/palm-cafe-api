@@ -1,5 +1,6 @@
 const Cafe = require('../models/cafe');
 const Feature = require('../models/feature');
+const logger = require('../config/logger');
 
 /**
  * Feature Service
@@ -77,7 +78,7 @@ async function cafeHasFeature(cafeId, featureKey) {
     
     return hasAccess;
   } catch (error) {
-    console.error('Error checking feature access:', error);
+    logger.error('Error checking feature access', { message: error.message });
     return false;
   }
 }

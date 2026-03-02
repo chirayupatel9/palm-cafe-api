@@ -1,4 +1,5 @@
 const { pool } = require('../config/database');
+const logger = require('../config/logger');
 
 /**
  * Audit Service
@@ -31,8 +32,7 @@ async function logAuditEvent(cafeId, actionType, previousValue, newValue, change
 
     return { success: true };
   } catch (error) {
-    console.error('Error logging audit event:', error);
-    // Don't throw - audit logging should not break the main flow
+    logger.error('Error logging audit event', { message: error.message });
     return { success: false, error: error.message };
   }
 }
@@ -42,8 +42,10 @@ async function logAuditEvent(cafeId, actionType, previousValue, newValue, change
  */
 async function getCafeAuditLog(cafeId, limit = 100, offset = 0) {
   try {
-    const [rows] = await pool.execute(`
-      SELECT 
+    const lim = Math.max(0, parseInt(limit, 10) || 0);
+    const off = Math.max(0, parseInt(offset, 10) || 0);
+    const [rows] = await pool.execute(
+      `SELECT 
         sal.*,
         u.username as changed_by_username,
         c.name as cafe_name
@@ -52,8 +54,9 @@ async function getCafeAuditLog(cafeId, limit = 100, offset = 0) {
       LEFT JOIN cafes c ON sal.cafe_id = c.id
       WHERE sal.cafe_id = ?
       ORDER BY sal.created_at DESC
-      LIMIT ? OFFSET ?
-    `, [cafeId, limit, offset]);
+      LIMIT ${lim} OFFSET ${off}`,
+      [cafeId]
+    );
 
     return rows;
   } catch (error) {
@@ -83,8 +86,9 @@ async function getAllAuditLogs(limit = 100, offset = 0, cafeId = null) {
       params.push(cafeId);
     }
     
-    query += ' ORDER BY sal.created_at DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
+    const lim = Math.max(0, parseInt(limit, 10) || 0);
+    const off = Math.max(0, parseInt(offset, 10) || 0);
+    query += ` ORDER BY sal.created_at DESC LIMIT ${lim} OFFSET ${off}`;
 
     const [rows] = await pool.execute(query, params);
     return rows;

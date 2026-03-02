@@ -1,6 +1,7 @@
 const subscriptionService = require('../services/subscriptionService');
 const featureService = require('../services/featureService');
 const Cafe = require('../models/cafe');
+const logger = require('../config/logger');
 
 /**
  * Middleware to enforce subscription-based access control
@@ -45,7 +46,7 @@ const requireActiveSubscription = async (req, res, next) => {
     req.subscription = subscription;
     next();
   } catch (error) {
-    console.error('Subscription check error:', error);
+    logger.error('Subscription check error', { message: error.message });
     return res.status(500).json({ 
       error: 'Failed to verify subscription',
       code: 'SUBSCRIPTION_CHECK_FAILED'
@@ -93,7 +94,7 @@ const requireFeature = (featureKey) => {
       req.subscription = await subscriptionService.getCafeSubscription(cafeId);
       next();
     } catch (error) {
-      console.error('Feature access check error:', error);
+      logger.error('Feature access check error', { message: error.message });
       return res.status(500).json({ 
         error: 'Failed to verify feature access',
         code: 'FEATURE_CHECK_FAILED'
@@ -130,7 +131,7 @@ const attachSubscriptionInfo = async (req, res, next) => {
     next();
   } catch (error) {
     // Don't block request if subscription check fails
-    console.error('Failed to attach subscription info:', error);
+    logger.error('Failed to attach subscription info', { message: error.message });
     next();
   }
 };

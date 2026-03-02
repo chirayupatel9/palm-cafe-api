@@ -1,5 +1,6 @@
 const mysql = require('mysql2/promise');
 require('dotenv').config();
+const logger = require('./logger');
 
 // Database configuration
 const dbConfig = {
@@ -123,7 +124,7 @@ const initializeDatabase = async () => {
           [item.id, item.name, item.description, item.price]
         );
       }
-      console.log('Default menu items inserted');
+      logger.info('Default menu items inserted');
     }
 
     // Insert default admin user if users table is empty
@@ -136,13 +137,13 @@ const initializeDatabase = async () => {
         'INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)',
         ['admin', 'admin@cafe.com', hashedPassword, 'admin']
       );
-      console.log('Default admin user created (username: admin, password: admin123)');
+      logger.info('Default admin user created');
     }
 
     connection.release();
-    console.log('Database initialized successfully');
+    logger.info('Database initialized successfully');
   } catch (error) {
-    console.error('Error initializing database:', error);
+    logger.error('Error initializing database', { message: error.message });
     throw error;
   }
 };
@@ -151,11 +152,10 @@ const initializeDatabase = async () => {
 const testConnection = async () => {
   try {
     const connection = await pool.getConnection();
-    console.log('Database connected successfully');
     connection.release();
     return true;
   } catch (error) {
-    console.error('Database connection failed:', error);
+    logger.error('Database connection failed', { message: error.message });
     return false;
   }
 };

@@ -18,7 +18,6 @@ module.exports = function registerHealth(app) {
       if (requestId) healthStatus.requestId = requestId;
 
       if (ok) {
-        logger.info('Health check passed', { ...healthStatus, requestId });
         res.json(healthStatus);
       } else {
         logger.warn('Health check: database disconnected', { requestId });
@@ -29,11 +28,40 @@ module.exports = function registerHealth(app) {
       const body = {
         status: 'ERROR',
         timestamp: new Date().toISOString(),
-        error: error.message,
-        database: 'unknown'
+        error: 'Internal server error',
+        database: 'unknown',
+        code: 'HEALTH_CHECK_FAILED',
+        requestId: requestId || undefined
       };
-      if (requestId) body.requestId = requestId;
       res.status(503).json(body);
+    }
+  });
+
+  app.get('/api/readiness', async (req, res) => {
+    const requestId = req.requestId || null;
+    try {
+      const dbConnected = await testConnection();
+      const body = {
+        ready: dbConnected,
+        timestamp: new Date().toISOString(),
+        database: dbConnected ? 'connected' : 'disconnected',
+        code: dbConnected ? undefined : 'NOT_READY',
+        requestId: requestId || undefined
+      };
+      if (dbConnected) {
+        res.status(200).json(body);
+      } else {
+        res.status(503).json(body);
+      }
+    } catch (error) {
+      logger.error('Readiness check failed', { error: error.message, requestId });
+      res.status(503).json({
+        ready: false,
+        timestamp: new Date().toISOString(),
+        database: 'unknown',
+        code: 'READINESS_CHECK_FAILED',
+        requestId: requestId || undefined
+      });
     }
   });
 };
