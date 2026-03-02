@@ -38,7 +38,7 @@ app.use(cors({
       process.env.FRONTEND_URL,
       process.env.ADMIN_URL,
       // Fallback for development
-      ...(process.env.NODE_ENV === 'development' ? ['http://localhost:3000', 'http://localhost:3001'] : [])
+      ...((process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') ? ['http://localhost:3000', 'http://localhost:3001'] : [])
     ].filter(Boolean); // Remove null/undefined values
     
     // Check if origin is in allowed list
@@ -120,6 +120,8 @@ const startServer = async () => {
     validateStartupEnv();
     process.env.TZ = 'UTC';
     logger.info('Timezone set to UTC');
+
+    await require('./lib/redis').connect();
 
     const dbConnected = await testConnection();
     if (!dbConnected) {

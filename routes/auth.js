@@ -144,18 +144,18 @@ module.exports = function registerAuth(app) {
 
       const user = await User.findByIdWithCafe((await User.findByEmail(email))?.id);
       if (!user) {
-        recordFailedAttempt(req);
+        await recordFailedAttempt(req);
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
       const userWithPassword = await User.findByEmail(email);
       const isValidPassword = await User.validatePassword(userWithPassword, password);
       if (!isValidPassword) {
-        recordFailedAttempt(req);
+        await recordFailedAttempt(req);
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
-      clearAttempts(req);
+      await clearAttempts(req);
       await User.updateLastLogin(user.id);
 
       const now = Math.floor(Date.now() / 1000);

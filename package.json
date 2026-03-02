@@ -13,7 +13,10 @@
     "lint": "node -e \"console.log('Lint placeholder; add ESLint when ready')\"",
     "test": "cross-env NODE_ENV=test jest",
     "test:e2e": "cross-env NODE_ENV=test jest --config=jest.e2e.config.js",
-    "test:coverage": "cross-env NODE_ENV=test jest --coverage"
+    "test:coverage": "cross-env NODE_ENV=test jest --coverage",
+    "test:load": "node tests/load/run-load-tests.js",
+    "test:stress": "cross-env NODE_ENV=test jest --config=jest.stress.config.js tests/stress",
+    "test:chaos": "cross-env NODE_ENV=test jest tests/chaos --no-cov"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -31,6 +34,8 @@
     "morgan": "^1.10.1",
     "multer": "^2.0.2",
     "mysql2": "^3.14.2",
+    "rate-limit-redis": "^4.3.1",
+    "redis": "^4.6.0",
     "node-cron": "^4.2.1",
     "pdfkit": "^0.14.0",
     "uuid": "^9.0.1",

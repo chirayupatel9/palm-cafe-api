@@ -13,6 +13,9 @@ function registerRoutes(app) {
   require('./health')(app);
   require('./metrics')(app);
   require('./paymentMethods')(app);
+  if (process.env.NODE_ENV === 'test') {
+    app.get('/api/chaos/throw', () => { throw new Error('Chaos test'); });
+  }
 }
 
 module.exports = registerRoutes;

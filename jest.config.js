@@ -1,7 +1,7 @@
 module.exports = {
   testEnvironment: 'node',
   testMatch: ['**/tests/**/*.test.js', '**/test/**/*.test.js'],
-  testPathIgnorePatterns: ['/node_modules/', '/tests/e2e/'],
+  testPathIgnorePatterns: ['/node_modules/', '/tests/e2e/', '/tests/stress/'],
   setupFiles: ['<rootDir>/tests/setupEnv.js'],
   setupFilesAfterEnv: ['<rootDir>/tests/closePoolAfterTests.js'],
   globalSetup: '<rootDir>/tests/setupDb.js',
