@@ -18,6 +18,7 @@ const { requireCafeMembership } = require('../middleware/cafeAuth');
 const { getOrderCafeId, requireOrderCafeScope } = require('./helpers');
 const { requireFeature, requireActiveSubscription } = require('../middleware/subscriptionAuth');
 const { uploadLimiter } = require('../middleware/rateLimiter');
+const { publicImagesDir } = require('../config/paths');
 const logger = require('../config/logger');
 
 module.exports = function registerMenu(app) {
@@ -1152,9 +1153,8 @@ app.post('/api/menu/import-zip', auth, requireActiveSubscription, requireFeature
     });
 
     // Ensure images directory exists
-    const uploadDir = path.join(__dirname, '..', 'public', 'images');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
+    if (!fs.existsSync(publicImagesDir)) {
+      fs.mkdirSync(publicImagesDir, { recursive: true });
     }
 
     // Process menu items
@@ -1369,7 +1369,7 @@ app.post('/api/menu/import-zip', auth, requireActiveSubscription, requireFeature
                 } else {
                   // Generate unique filename
                   const uniqueFileName = `menu-item-${Date.now()}-${i}-${uuidv4()}${ext}`;
-                  const targetPath = path.join(uploadDir, uniqueFileName);
+                  const targetPath = path.join(publicImagesDir, uniqueFileName);
                   
                   // Copy image to public/images directory
                   try {
@@ -2207,7 +2207,7 @@ app.post('/api/cafe-settings/logo', auth, imageUpload.single('logo'), async (req
     // Generate unique filename
     const fileExtension = path.extname(req.file.originalname);
     const fileName = `cafe-logo-${Date.now()}${fileExtension}`;
-    const filePath = path.join(__dirname, '..', 'public', 'images', fileName);
+    const filePath = path.join(publicImagesDir, fileName);
 
     logger.info('[UPLOAD LOGO] File path:', filePath);
 
@@ -2288,7 +2288,7 @@ app.post('/api/cafe-settings/hero-image', auth, imageUpload.single('hero_image')
     // Generate unique filename
     const fileExtension = path.extname(req.file.originalname);
     const fileName = `cafe-hero-${Date.now()}${fileExtension}`;
-    const filePath = path.join(__dirname, '..', 'public', 'images', fileName);
+    const filePath = path.join(publicImagesDir, fileName);
 
     logger.info('[UPLOAD HERO] File path:', filePath);
 
@@ -2369,7 +2369,7 @@ app.post('/api/cafe-settings/promo-banner-image', auth, imageUpload.single('prom
     // Generate unique filename
     const fileExtension = path.extname(req.file.originalname);
     const fileName = `cafe-promo-banner-${Date.now()}${fileExtension}`;
-    const filePath = path.join(__dirname, '..', 'public', 'images', fileName);
+    const filePath = path.join(publicImagesDir, fileName);
 
     logger.info('[UPLOAD PROMO] File path:', filePath);
 
@@ -2484,7 +2484,7 @@ app.post('/api/promo-banners', auth, adminAuth, requireOrderCafeScope, imageUplo
     }
     const fileExtension = path.extname(req.file.originalname) || '.jpg';
     const fileName = `promo-banner-${Date.now()}-${cafeId}${fileExtension}`;
-    const filePath = path.join(__dirname, '..', 'public', 'images', fileName);
+    const filePath = path.join(publicImagesDir, fileName);
     const uploadDir = path.dirname(filePath);
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
@@ -2552,7 +2552,7 @@ app.patch('/api/promo-banners/:id/image', auth, adminAuth, requireOrderCafeScope
     }
     const fileExtension = path.extname(req.file.originalname) || '.jpg';
     const fileName = `promo-banner-${Date.now()}-${cafeId}-${id}${fileExtension}`;
-    const filePath = path.join(__dirname, '..', 'public', 'images', fileName);
+    const filePath = path.join(publicImagesDir, fileName);
     const uploadDir = path.dirname(filePath);
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
@@ -2631,7 +2631,7 @@ app.post('/api/menu/upload-image', auth, imageUpload.single('image'), async (req
     // Generate unique filename
     const fileExtension = path.extname(req.file.originalname);
     const fileName = `menu-item-${Date.now()}${fileExtension}`;
-    const filePath = path.join(__dirname, '..', 'public', 'images', fileName);
+    const filePath = path.join(publicImagesDir, fileName);
 
     // Ensure directory exists
     const uploadDir = path.dirname(filePath);
@@ -2692,7 +2692,7 @@ app.post('/api/menu/:id/image', auth, requireCafeMembership, imageUpload.single(
 
     // Delete old image if it exists and is a local file
     if (menuItem.image_url && menuItem.image_url.startsWith('/images/')) {
-      const oldImagePath = path.join(__dirname, '..', 'public', menuItem.image_url);
+      const oldImagePath = path.join(publicImagesDir, path.basename(menuItem.image_url));
       try {
         if (fs.existsSync(oldImagePath)) {
           fs.unlinkSync(oldImagePath);
@@ -2706,7 +2706,7 @@ app.post('/api/menu/:id/image', auth, requireCafeMembership, imageUpload.single(
     // Generate unique filename
     const fileExtension = path.extname(req.file.originalname);
     const fileName = `menu-item-${id}-${Date.now()}${fileExtension}`;
-    const filePath = path.join(__dirname, '..', 'public', 'images', fileName);
+    const filePath = path.join(publicImagesDir, fileName);
 
     // Ensure directory exists
     const uploadDir = path.dirname(filePath);
@@ -2764,7 +2764,7 @@ app.delete('/api/menu/:id/image', auth, requireCafeMembership, async (req, res) 
 
     // Delete image file if it exists and is a local file
     if (menuItem.image_url && menuItem.image_url.startsWith('/images/')) {
-      const imagePath = path.join(__dirname, '..', 'public', menuItem.image_url);
+      const imagePath = path.join(publicImagesDir, path.basename(menuItem.image_url));
       try {
         if (fs.existsSync(imagePath)) {
           fs.unlinkSync(imagePath);
