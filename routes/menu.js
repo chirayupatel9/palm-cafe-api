@@ -2157,14 +2157,27 @@ app.put('/api/cafe-settings', auth, async (req, res) => {
       changed_by: req.user.username
     });
 
-    // Keep cafes.name in sync so customer menu branding shows the updated name
-    try {
-      const updatedCafe = await Cafe.update(cafeId, { name: trimmedName });
-      if (updatedCafe && updatedCafe.slug) {
-        Cafe.invalidateSlugCache(updatedCafe.slug);
+    // Always keep cafes.name in sync when cafe_settings is updated so customer menu shows the correct name
+    const cafeIdNum = parseInt(cafeId, 10);
+    if (!Number.isNaN(cafeIdNum)) {
+      try {
+        const [cafeUpdateResult] = await pool.execute(
+          'UPDATE cafes SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [trimmedName, cafeIdNum]
+        );
+        if (cafeUpdateResult.affectedRows === 0) {
+          logger.warn('[PUT /api/cafe-settings] cafes table: no row updated for id', cafeIdNum, '- ensure cafes.id matches cafe_settings.cafe_id');
+        } else {
+          const [cafeRows] = await pool.execute('SELECT slug FROM cafes WHERE id = ?', [cafeIdNum]);
+          if (cafeRows.length > 0 && cafeRows[0].slug) {
+            Cafe.invalidateSlugCache(cafeRows[0].slug);
+          }
+        }
+      } catch (cafeUpdateErr) {
+        logger.error('[PUT /api/cafe-settings] Failed to sync cafe name to cafes table:', cafeUpdateErr.message);
       }
-    } catch (cafeUpdateErr) {
-      logger.warn('[PUT /api/cafe-settings] Could not sync cafe name to cafes table:', cafeUpdateErr.message);
+    } else {
+      logger.warn('[PUT /api/cafe-settings] Invalid cafe_id for cafes sync:', cafeId);
     }
 
     res.json(updatedSettings);

@@ -391,6 +391,27 @@ app.put('/api/superadmin/cafes/:id/settings', auth, requireSuperAdmin, async (re
       logger.error(`[PUT /api/superadmin/cafes/:id/settings] Updated settings cafe_id mismatch: requested ${cafeId}, got ${updated[0].cafe_id}`);
       return res.status(500).json({ error: 'Updated settings cafe_id mismatch' });
     }
+
+    // Keep cafes.name in sync when cafe_name was in the payload so customer menu shows the correct name
+    if (settingsData.cafe_name != null && String(settingsData.cafe_name).trim() !== '') {
+      const trimmedName = String(settingsData.cafe_name).trim();
+      try {
+        const [cafeUpdateResult] = await pool.execute(
+          'UPDATE cafes SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [trimmedName, cafeId]
+        );
+        if (cafeUpdateResult.affectedRows === 0) {
+          logger.warn('[PUT /api/superadmin/cafes/:id/settings] cafes table: no row updated for id', cafeId);
+        } else {
+          const [cafeRows] = await pool.execute('SELECT slug FROM cafes WHERE id = ?', [cafeId]);
+          if (cafeRows.length > 0 && cafeRows[0].slug) {
+            Cafe.invalidateSlugCache(cafeRows[0].slug);
+          }
+        }
+      } catch (cafeUpdateErr) {
+        logger.error('[PUT /api/superadmin/cafes/:id/settings] Failed to sync cafe name to cafes table:', cafeUpdateErr.message);
+      }
+    }
     
     res.json({
       message: 'Cafe settings updated successfully',
