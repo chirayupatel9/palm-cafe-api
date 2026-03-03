@@ -225,11 +225,15 @@ app.put('/api/customer/profile', async (req, res) => {
       return res.status(404).json({ error: 'Customer not found' });
     }
 
+    // Build full customerData so bind params are never undefined (use null for SQL NULL)
     const customerData = {
       name: sanitizeString(name),
-      email: sanitizeString(email),
-      address: sanitizeString(address),
-      date_of_birth: date_of_birth && !isMalformedString(date_of_birth) ? String(date_of_birth).trim() : null
+      email: sanitizeString(email) || null,
+      phone: existingCustomer.phone != null ? existingCustomer.phone : null,
+      address: sanitizeString(address) || null,
+      date_of_birth: date_of_birth && !isMalformedString(date_of_birth) ? String(date_of_birth).trim() : null,
+      notes: existingCustomer.notes != null ? existingCustomer.notes : null,
+      is_active: existingCustomer.is_active != null ? existingCustomer.is_active : true
     };
 
     const customer = await Customer.update(customerId, customerData, cafeId);
