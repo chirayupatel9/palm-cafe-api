@@ -135,6 +135,14 @@ class Cafe {
   }
 
   /**
+   * Invalidate getBySlug cache for a slug (e.g. after updating cafe name so customer menu sees it)
+   */
+  static invalidateSlugCache(slug) {
+    if (!slug) return;
+    cafeBySlugCache.delete(String(slug).toLowerCase());
+  }
+
+  /**
    * Get cafe by slug (cached 60s to reduce DB load on login/order creation)
    */
   static async getBySlug(slug) {
