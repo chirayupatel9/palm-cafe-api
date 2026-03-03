@@ -265,15 +265,15 @@ class CafeSettings {
         logger.debug('[CafeSettings.update] Including cafe_id in insert:', settingsData.cafe_id);
       }
 
-      // Check if we should update existing record or create new one
+      // Prefer UPDATE over INSERT: use existing row for this cafe (active or not) so we don't create a new row every time
       const hasCafeIdColumn = existingColumns.includes('cafe_id');
       let shouldUpdate = false;
       let existingSettingsId = null;
       
       if (hasCafeIdColumn && settingsData.cafe_id) {
-        // Multi-cafe: only touch this cafe's row
+        // Find any row for this cafe (active first, then most recent inactive) so we update in place
         const [existing] = await connection.execute(
-          'SELECT id FROM cafe_settings WHERE cafe_id = ? AND is_active = TRUE LIMIT 1',
+          'SELECT id FROM cafe_settings WHERE cafe_id = ? ORDER BY is_active DESC, id DESC LIMIT 1',
           [settingsData.cafe_id]
         );
         
@@ -282,7 +282,7 @@ class CafeSettings {
           existingSettingsId = existing[0].id;
           logger.debug('[CafeSettings.update] Updating existing settings record ID:', existingSettingsId);
         } else {
-          logger.debug('[CafeSettings.update] No active settings found, creating new record');
+          logger.debug('[CafeSettings.update] No settings row for cafe_id, creating new record');
         }
       } else if (!hasCafeIdColumn) {
         // Legacy: table has no cafe_id column, single global row
@@ -304,23 +304,30 @@ class CafeSettings {
         
         // Build update fields (exclude id, is_active, created_at, updated_at, cafe_id)
         insertColumns.forEach((col, index) => {
-          if (col !== 'id' && col !== 'is_active' && col !== 'created_at' && col !== 'cafe_id') {
+          if (col !== 'id' && col !== 'is_active' && col !== 'created_at' && col !== 'updated_at' && col !== 'cafe_id') {
             updateFields.push(`${col} = ?`);
             updateValues.push(insertValues[index]);
           }
         });
         
-        // Always update updated_at
+        // Always set is_active = TRUE and updated_at = NOW() so the updated row is the active one
+        if (existingColumns.includes('is_active')) {
+          updateFields.push('is_active = TRUE');
+        }
         if (existingColumns.includes('updated_at')) {
           updateFields.push('updated_at = NOW()');
         }
         
         if (updateFields.length > 0) {
           updateValues.push(existingSettingsId);
-          // Scope by cafe_id so we never update another cafe's row (multi-cafe safety)
           const hasCafeIdInUpdate = hasCafeIdColumn && settingsData.cafe_id;
           if (hasCafeIdInUpdate) {
             updateValues.push(settingsData.cafe_id);
+            // Deactivate any other rows for this cafe so only this one is active
+            await connection.execute(
+              'UPDATE cafe_settings SET is_active = FALSE WHERE cafe_id = ? AND id != ?',
+              [settingsData.cafe_id, existingSettingsId]
+            );
           }
           const updateQuery = hasCafeIdInUpdate
             ? `UPDATE cafe_settings SET ${updateFields.join(', ')} WHERE id = ? AND cafe_id = ?`
@@ -328,24 +335,20 @@ class CafeSettings {
           await connection.execute(updateQuery, updateValues);
         }
       } else {
-        // No existing active settings, create new record
-        // Deactivate any other active settings for this cafe (if cafe_id exists)
+        // No existing row for this cafe, create new record
         if (hasCafeIdColumn && settingsData.cafe_id) {
           await connection.execute(
             'UPDATE cafe_settings SET is_active = FALSE WHERE cafe_id = ?',
             [settingsData.cafe_id]
           );
         } else {
-          // Legacy: no cafe_id column, deactivate all
           await connection.execute('UPDATE cafe_settings SET is_active = FALSE');
         }
         
-        // Insert new settings with dynamic columns
         const insertQuery = `
           INSERT INTO cafe_settings (${insertColumns.join(', ')}) 
           VALUES (${insertPlaceholders.join(', ')})
         `;
-        
         await connection.execute(insertQuery, insertValues);
       }
 
