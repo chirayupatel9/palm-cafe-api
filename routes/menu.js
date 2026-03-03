@@ -2005,7 +2005,8 @@ app.get('/api/cafe-settings', async (req, res) => {
 app.put('/api/cafe-settings', auth, async (req, res) => {
   try {
     const { 
-      cafe_name, logo_url, address, phone, email, website, opening_hours, description,
+      cafe_name, logo_url, hero_image_url: body_hero_image_url, promo_banner_image_url: body_promo_banner_image_url,
+      address, phone, email, website, opening_hours, description,
       show_kitchen_tab, show_customers_tab, show_payment_methods_tab, show_menu_tab, show_inventory_tab, show_history_tab, show_menu_images,
       chef_show_kitchen_tab, chef_show_menu_tab, chef_show_inventory_tab, chef_show_history_tab,
       chef_can_edit_orders, chef_can_view_customers, chef_can_view_payments,
@@ -2079,10 +2080,24 @@ app.put('/api/cafe-settings', auth, async (req, res) => {
       });
     }
 
+    // Preserve existing branding images when not sent (save changes often omits them)
+    let currentSettings = null;
+    try {
+      currentSettings = await CafeSettings.getCurrent(cafeId);
+    } catch (err) {
+      logger.debug('[PUT /api/cafe-settings] Could not fetch current settings for preserve:', err.message);
+    }
+    const existingLogo = currentSettings?.logo_url;
+    const existingHero = currentSettings?.hero_image_url;
+    const existingPromo = currentSettings?.promo_banner_image_url;
+
+    const trimmedName = cafe_name.trim();
     const updatedSettings = await CafeSettings.update({
       cafe_id: cafeId,
-      cafe_name: cafe_name.trim(),
-      logo_url: logo_url || '/images/palm-cafe-logo.png',
+      cafe_name: trimmedName,
+      logo_url: logo_url !== undefined && logo_url !== '' ? logo_url : (existingLogo || '/images/palm-cafe-logo.png'),
+      hero_image_url: body_hero_image_url !== undefined ? body_hero_image_url : (existingHero || null),
+      promo_banner_image_url: body_promo_banner_image_url !== undefined ? body_promo_banner_image_url : (existingPromo || null),
       address: address || '',
       phone: phone || '',
       email: email || '',
@@ -2141,6 +2156,16 @@ app.put('/api/cafe-settings', auth, async (req, res) => {
       dark_surface_color: dark_surface_color || '#1F2937',
       changed_by: req.user.username
     });
+
+    // Keep cafes.name in sync so customer menu branding shows the updated name
+    try {
+      const updatedCafe = await Cafe.update(cafeId, { name: trimmedName });
+      if (updatedCafe && updatedCafe.slug) {
+        Cafe.invalidateSlugCache(updatedCafe.slug);
+      }
+    } catch (cafeUpdateErr) {
+      logger.warn('[PUT /api/cafe-settings] Could not sync cafe name to cafes table:', cafeUpdateErr.message);
+    }
 
     res.json(updatedSettings);
   } catch (error) {
