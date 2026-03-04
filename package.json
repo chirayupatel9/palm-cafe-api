@@ -1,22 +1,14 @@
 {
-  "name": "cafe-management-server",
+  "name": "cafe-management-server-ts",
   "version": "1.0.0",
-  "description": "Backend API for Cafe Management System",
-  "main": "index.js",
+  "description": "Backend API for Cafe Management System (TypeScript)",
+  "main": "dist/index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js",
-    "setup": "node setup.js",
-    "create-db": "node create-database.js",
-    "migrate": "node run-migrations.js",
-    "migrate:status": "node -e \"require('./run-migrations').runMigrations().then(() => console.log('Migrations up to date')).catch(console.error)\"",
-    "lint": "node -e \"console.log('Lint placeholder; add ESLint when ready')\"",
-    "test": "cross-env NODE_ENV=test jest",
-    "test:e2e": "cross-env NODE_ENV=test jest --config=jest.e2e.config.js",
-    "test:coverage": "cross-env NODE_ENV=test jest --coverage",
-    "test:load": "node tests/load/run-load-tests.js",
-    "test:stress": "cross-env NODE_ENV=test jest --config=jest.stress.config.js tests/stress",
-    "test:chaos": "cross-env NODE_ENV=test jest tests/chaos --no-cov"
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "nodemon -e ts --exec \"node -r ts-node/register index.ts\"",
+    "migrate": "node -r ts-node/register run-migrations.ts",
+    "lint": "eslint . --ext .ts"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -46,9 +38,20 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "cross-env": "^7.0.3",
-    "jest": "^29.7.0",
+    "@types/adm-zip": "^0.5.7",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/morgan": "^1.9.9",
+    "@types/multer": "^1.4.11",
+    "@types/node": "^20.10.0",
+    "@types/nodemailer": "^7.0.11",
+    "@types/pdfkit": "^0.17.5",
+    "@types/uuid": "^9.0.8",
+    "@types/ws": "^8.5.10",
     "nodemon": "^3.0.1",
-    "supertest": "^7.2.2"
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.0"
   }
 }
