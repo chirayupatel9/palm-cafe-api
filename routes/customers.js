@@ -5,6 +5,17 @@ const { getOrderCafeId, requireOrderCafeScope, isInvalidCustomerPhone, parseList
 const { validateRequiredString, sanitizeString, isMalformedString, parsePositiveId } = require('../middleware/validateInput');
 const { auth, adminAuth } = require('../middleware/auth');
 const logger = require('../config/logger');
+const otpStore = require('../services/otpStore');
+const emailService = require('../services/emailService');
+
+/** Simple email format check; returns error string or null. */
+function validateEmail(value) {
+  const s = sanitizeString(value);
+  if (!s) return 'Email is required';
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(s)) return 'Please enter a valid email address';
+  return null;
+}
 
 module.exports = function registerCustomers(app) {
 app.get('/api/customers/statistics', auth, async (req, res) => {
@@ -84,11 +95,98 @@ app.get('/api/customers/:id', auth, requireOrderCafeScope, async (req, res) => {
 });
 
 // Public customer authentication endpoints (no auth required)
-// Search customers by phone for login (POST with encrypted payload)
+
+// Send OTP to email (Gmail SMTP)
+app.post('/api/customer/send-otp', async (req, res) => {
+  try {
+    const { email, cafeSlug } = req.body;
+    const emailErr = validateEmail(email);
+    if (emailErr) {
+      return res.status(400).json({ error: emailErr });
+    }
+
+    const slug = sanitizeString(cafeSlug || req.query.cafeSlug) || 'default';
+    if (!emailService.isConfigured()) {
+      return res.status(503).json({ error: 'Email service is not configured. Please try again later.' });
+    }
+
+    const emailVal = sanitizeString(email).toLowerCase();
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    otpStore.set(emailVal, slug, otp);
+
+    const result = await emailService.sendOtpEmail(emailVal, otp);
+    if (!result.sent) {
+      return res.status(500).json({ error: result.error || 'Failed to send verification email' });
+    }
+    res.json({ message: 'Verification code sent to your email' });
+  } catch (error) {
+    logger.error('Error sending OTP:', error);
+    res.status(500).json({ error: 'Failed to send verification code' });
+  }
+});
+
+// Login with email + OTP
 app.post('/api/customer/login', async (req, res) => {
   try {
+    const { email, otp, cafeSlug } = req.body;
+    const emailErr = validateEmail(email);
+    if (emailErr) {
+      return res.status(400).json({ error: emailErr });
+    }
+    const otpErr = validateRequiredString(otp, 'Verification code');
+    if (otpErr) {
+      return res.status(400).json({ error: otpErr });
+    }
+
+    let cafeId = null;
+    const slug = sanitizeString(cafeSlug || req.query.cafeSlug) || 'default';
+
+    try {
+      const cafe = await Cafe.getBySlug(slug);
+      if (cafe) cafeId = cafe.id;
+    } catch (error) {
+      logger.warn('[POST /api/customer/login] Could not find cafe by slug:', slug);
+    }
+
+    const emailVal = sanitizeString(email).toLowerCase();
+    const otpVal = String(otp).trim();
+    if (!otpStore.verifyAndConsume(emailVal, slug, otpVal)) {
+      return res.status(400).json({ error: 'Invalid or expired verification code' });
+    }
+
+    const customer = await Customer.findByEmail(emailVal, cafeId);
+    if (customer) {
+      const sanitizedCustomer = {
+        id: customer.id,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        address: customer.address,
+        date_of_birth: customer.date_of_birth,
+        loyalty_points: customer.loyalty_points,
+        total_spent: customer.total_spent,
+        visit_count: customer.visit_count,
+        first_visit_date: customer.first_visit_date,
+        last_visit_date: customer.last_visit_date,
+        is_active: customer.is_active,
+        notes: customer.notes,
+        created_at: customer.created_at,
+        updated_at: customer.updated_at
+      };
+      res.json(sanitizedCustomer);
+    } else {
+      res.status(404).json({ error: 'Customer not found. Please register first.' });
+    }
+  } catch (error) {
+    logger.error('Error during customer login:', error);
+    res.status(500).json({ error: 'Failed to find customer' });
+  }
+});
+
+// Lookup customer by phone (for staff order page; no OTP required)
+app.post('/api/customer/lookup', async (req, res) => {
+  try {
     const { phone, cafeSlug } = req.body;
-    
     const phoneErr = validateRequiredString(phone, 'Phone number');
     if (phoneErr) {
       return res.status(400).json({ error: phoneErr });
@@ -96,23 +194,16 @@ app.post('/api/customer/login', async (req, res) => {
 
     let cafeId = null;
     const slug = sanitizeString(cafeSlug || req.query.cafeSlug) || 'default';
-
-    // Get cafe_id from cafe slug (for public customer login)
     try {
       const cafe = await Cafe.getBySlug(slug);
-      if (cafe) {
-        cafeId = cafe.id;
-      }
+      if (cafe) cafeId = cafe.id;
     } catch (error) {
-      logger.warn('[POST /api/customer/login] Could not find cafe by slug:', slug);
+      logger.warn('[POST /api/customer/lookup] Could not find cafe by slug:', slug);
     }
-    
-    // Find customer scoped to this cafe
+
     const phoneVal = sanitizeString(phone);
     const customer = await Customer.findByEmailOrPhone(null, phoneVal, cafeId);
-    
     if (customer) {
-      // Return customer data; include phone so the client can fetch order history
       const sanitizedCustomer = {
         id: customer.id,
         name: customer.name,
@@ -135,11 +226,60 @@ app.post('/api/customer/login', async (req, res) => {
       res.status(404).json({ error: 'Customer not found' });
     }
   } catch (error) {
+    logger.error('Error looking up customer:', error);
     res.status(500).json({ error: 'Failed to find customer' });
   }
 });
 
-// Register new customer (public endpoint)
+// Refresh customer data by id (e.g. after placing order to get updated loyalty points)
+app.get('/api/customer/refresh', async (req, res) => {
+  try {
+    const customerId = parsePositiveId(req.query.customerId);
+    const slug = sanitizeString(req.query.cafeSlug) || 'default';
+    if (!customerId) {
+      return res.status(400).json({ error: 'Invalid customer ID' });
+    }
+
+    let cafeId = null;
+    try {
+      const cafe = await Cafe.getBySlug(slug);
+      if (cafe) cafeId = cafe.id;
+    } catch (e) {
+      // ignore
+    }
+    if (!cafeId) {
+      return res.status(400).json({ error: 'Invalid cafe' });
+    }
+
+    const customer = await Customer.getById(customerId, cafeId);
+    if (!customer) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+    const sanitizedCustomer = {
+      id: customer.id,
+      name: customer.name,
+      email: customer.email,
+      phone: customer.phone,
+      address: customer.address,
+      date_of_birth: customer.date_of_birth,
+      loyalty_points: customer.loyalty_points,
+      total_spent: customer.total_spent,
+      visit_count: customer.visit_count,
+      first_visit_date: customer.first_visit_date,
+      last_visit_date: customer.last_visit_date,
+      is_active: customer.is_active,
+      notes: customer.notes,
+      created_at: customer.created_at,
+      updated_at: customer.updated_at
+    };
+    res.json(sanitizedCustomer);
+  } catch (error) {
+    logger.error('Error refreshing customer:', error);
+    res.status(500).json({ error: 'Failed to refresh customer' });
+  }
+});
+
+// Register new customer (public endpoint) - email and phone both required
 app.post('/api/customer/register', async (req, res) => {
   try {
     const { name, email, phone, address, date_of_birth, notes, cafeSlug } = req.body;
@@ -147,6 +287,10 @@ app.post('/api/customer/register', async (req, res) => {
     const nameErr = validateRequiredString(name, 'Customer name');
     if (nameErr) {
       return res.status(400).json({ error: nameErr });
+    }
+    const emailErr = validateEmail(email);
+    if (emailErr) {
+      return res.status(400).json({ error: emailErr });
     }
     const phoneErr = validateRequiredString(phone, 'Phone number');
     if (phoneErr) {
@@ -156,25 +300,22 @@ app.post('/api/customer/register', async (req, res) => {
     let cafeId = null;
     const slug = sanitizeString(cafeSlug || req.query.cafeSlug) || 'default';
 
-    // Get cafe_id from cafe slug (for public customer registration)
     try {
       const cafe = await Cafe.getBySlug(slug);
-      if (cafe) {
-        cafeId = cafe.id;
-      }
+      if (cafe) cafeId = cafe.id;
     } catch (error) {
       logger.warn('[POST /api/customer/register] Could not find cafe by slug:', slug);
     }
-    
+
     if (!cafeId) {
-      return res.status(400).json({ 
-        error: 'Unable to determine cafe. Please provide a valid cafe slug.' 
+      return res.status(400).json({
+        error: 'Unable to determine cafe. Please provide a valid cafe slug.'
       });
     }
 
     const customerData = {
       name: sanitizeString(name),
-      email: sanitizeString(email),
+      email: sanitizeString(email).toLowerCase(),
       phone: sanitizeString(phone),
       address: sanitizeString(address),
       date_of_birth: date_of_birth && !isMalformedString(date_of_birth) ? String(date_of_birth).trim() : null,
@@ -182,10 +323,9 @@ app.post('/api/customer/register', async (req, res) => {
       cafe_id: cafeId
     };
 
-    // Check if customer already exists (scoped to this cafe)
     const existingCustomer = await Customer.findByEmailOrPhone(customerData.email, customerData.phone, cafeId);
     if (existingCustomer) {
-      return res.status(400).json({ error: 'Customer with this phone number already exists' });
+      return res.status(400).json({ error: 'Customer with this email or phone already exists' });
     }
 
     const customer = await Customer.create(customerData);

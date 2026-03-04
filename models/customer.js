@@ -91,6 +91,11 @@ class Customer {
     }
   }
 
+  // Get customer by email only (optionally filtered by cafe_id)
+  static async findByEmail(email, cafeId = null) {
+    return this.findByEmailOrPhone(email, '__no_match__', cafeId);
+  }
+
   // Get customer by email or phone (optionally filtered by cafe_id)
   static async findByEmailOrPhone(email, phone, cafeId = null) {
     try {

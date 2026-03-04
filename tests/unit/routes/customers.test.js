@@ -17,6 +17,8 @@ jest.mock('../../../middleware/validateInput', () => ({
   parsePositiveId: jest.fn()
 }));
 jest.mock('../../../config/logger', () => ({ error: jest.fn(), warn: jest.fn() }));
+jest.mock('../../../services/otpStore', () => ({ set: jest.fn(), get: jest.fn(), verifyAndConsume: jest.fn() }));
+jest.mock('../../../services/emailService', () => ({ sendOtpEmail: jest.fn().mockResolvedValue({ sent: true }), isConfigured: jest.fn().mockReturnValue(true) }));
 
 const helpers = require('../../../routes/helpers');
 const { getOrderCafeId, parseListLimitOffset } = helpers;
@@ -143,42 +145,60 @@ describe('routes/customers', () => {
 
   describe('POST /api/customer/login', () => {
     const handler = getHandler('POST', '/api/customer/login');
-    it('returns 400 when phone missing', async () => {
-      validateRequiredString.mockReturnValue('Phone number is required and must be a valid value');
-      const req = { body: { phone: '' }, query: {} };
+    const otpStore = require('../../../services/otpStore');
+
+    beforeEach(() => {
+      otpStore.verifyAndConsume.mockReturnValue(true);
+      sanitizeString.mockImplementation((v) => (v != null && v !== 'undefined' ? String(v).trim().toLowerCase() : null));
+    });
+
+    it('returns 400 when email invalid', async () => {
+      const req = { body: { email: 'bad', otp: '123456' }, query: {} };
       const res = mockRes();
       await handler(req, res);
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Phone number is required and must be a valid value' });
     });
-    it('continues when Cafe.getBySlug throws (catch branch)', async () => {
-      Cafe.getBySlug.mockRejectedValue(new Error('db'));
-      Customer.findByEmailOrPhone.mockResolvedValue(null);
-      const req = { body: { phone: '+123' }, query: {} };
+    it('returns 400 when otp missing', async () => {
+      validateRequiredString.mockReturnValue('Verification code is required');
+      sanitizeString.mockImplementation((v) => (v != null && v !== 'undefined' ? String(v).trim().toLowerCase() : null));
+      const req = { body: { email: 'a@b.com', otp: '' }, query: {} };
       const res = mockRes();
       await handler(req, res);
-      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+    it('returns 400 when OTP invalid or expired', async () => {
+      otpStore.verifyAndConsume.mockReturnValue(false);
+      Cafe.getBySlug.mockResolvedValue({ id: 1 });
+      sanitizeString.mockImplementation((v) => (v != null && v !== 'undefined' ? String(v).trim().toLowerCase() : null));
+      const req = { body: { email: 'a@b.com', otp: '123456' }, query: {} };
+      const res = mockRes();
+      await handler(req, res);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid or expired verification code' });
     });
     it('returns 404 when customer not found', async () => {
       Cafe.getBySlug.mockResolvedValue({ id: 1 });
       Customer.findByEmailOrPhone.mockResolvedValue(null);
-      const req = { body: { phone: '+123' }, query: {} };
+      sanitizeString.mockImplementation((v) => (v != null && v !== 'undefined' ? String(v).trim().toLowerCase() : null));
+      const req = { body: { email: 'a@b.com', otp: '123456' }, query: {} };
       const res = mockRes();
       await handler(req, res);
       expect(res.status).toHaveBeenCalledWith(404);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Customer not found' });
+      expect(res.json).toHaveBeenCalledWith({ error: 'Customer not found. Please register first.' });
     });
     it('returns 200 with sanitized customer', async () => {
       Cafe.getBySlug.mockResolvedValue({ id: 1 });
-      Customer.findByEmailOrPhone.mockResolvedValue({ id: 1, name: 'Bob', email: 'b@b.com', phone: '+123', address: null, date_of_birth: null, loyalty_points: 0, total_spent: 0, visit_count: 0, first_visit_date: null, last_visit_date: null, is_active: true, notes: null, created_at: null, updated_at: null });
-      const req = { body: { phone: '+123' }, query: {} };
+      Customer.findByEmailOrPhone.mockResolvedValue({ id: 1, name: 'Bob', email: 'a@b.com', phone: '+123', address: null, date_of_birth: null, loyalty_points: 0, total_spent: 0, visit_count: 0, first_visit_date: null, last_visit_date: null, is_active: true, notes: null, created_at: null, updated_at: null });
+      sanitizeString.mockImplementation((v) => (v != null && v !== 'undefined' ? String(v).trim().toLowerCase() : null));
+      const req = { body: { email: 'a@b.com', otp: '123456' }, query: {} };
       const res = mockRes();
       await handler(req, res);
       expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ id: 1, name: 'Bob', phone: '+123' }));
     });
     it('returns 500 on error', async () => {
       Customer.findByEmailOrPhone.mockRejectedValue(new Error('db'));
-      const req = { body: { phone: '+123' }, query: {} };
+      sanitizeString.mockImplementation((v) => (v != null && v !== 'undefined' ? String(v).trim().toLowerCase() : null));
+      const req = { body: { email: 'a@b.com', otp: '123456' }, query: {} };
       const res = mockRes();
       await handler(req, res);
       expect(res.status).toHaveBeenCalledWith(500);
@@ -188,23 +208,30 @@ describe('routes/customers', () => {
 
   describe('POST /api/customer/register', () => {
     const handler = getHandler('POST', '/api/customer/register');
+    const validBody = { name: 'C', email: 'c@example.com', phone: '+123' };
     it('returns 400 when name missing', async () => {
       validateRequiredString.mockImplementation((val, name) => (name === 'Customer name' ? 'Customer name is required and must be a valid value' : null));
-      const req = { body: { name: '', phone: '+123' }, query: {} };
+      const req = { body: { ...validBody, name: '' }, query: {} };
+      const res = mockRes();
+      await handler(req, res);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+    it('returns 400 when email missing or invalid', async () => {
+      const req = { body: { name: 'C', email: '', phone: '+123' }, query: {} };
       const res = mockRes();
       await handler(req, res);
       expect(res.status).toHaveBeenCalledWith(400);
     });
     it('returns 400 when phone missing', async () => {
       validateRequiredString.mockImplementation((val, name) => (name === 'Phone number' ? 'Phone number is required' : null));
-      const req = { body: { name: 'C', phone: '' }, query: {} };
+      const req = { body: { name: 'C', email: 'c@example.com', phone: '' }, query: {} };
       const res = mockRes();
       await handler(req, res);
       expect(res.status).toHaveBeenCalledWith(400);
     });
     it('returns 400 when cafe not found', async () => {
       Cafe.getBySlug.mockResolvedValue(null);
-      const req = { body: { name: 'C', phone: '+123' }, query: {} };
+      const req = { body: validBody, query: {} };
       const res = mockRes();
       await handler(req, res);
       expect(res.status).toHaveBeenCalledWith(400);
@@ -212,37 +239,38 @@ describe('routes/customers', () => {
     });
     it('returns 400 when Cafe.getBySlug throws (catch branch)', async () => {
       Cafe.getBySlug.mockRejectedValue(new Error('db'));
-      const req = { body: { name: 'C', phone: '+123' }, query: {} };
+      const req = { body: validBody, query: {} };
       const res = mockRes();
       await handler(req, res);
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.json).toHaveBeenCalledWith({ error: 'Unable to determine cafe. Please provide a valid cafe slug.' });
     });
-    it('returns 400 when duplicate customer (phone exists)', async () => {
+    it('returns 400 when duplicate customer (email or phone exists)', async () => {
       Cafe.getBySlug.mockResolvedValue({ id: 1 });
       Customer.findByEmailOrPhone.mockResolvedValue({ id: 1 });
-      const req = { body: { name: 'C', phone: '+123' }, query: {} };
+      const req = { body: validBody, query: {} };
       const res = mockRes();
       await handler(req, res);
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Customer with this phone number already exists' });
+      expect(res.json).toHaveBeenCalledWith({ error: 'Customer with this email or phone already exists' });
     });
     it('returns 201 with customer on success', async () => {
       Cafe.getBySlug.mockResolvedValue({ id: 1 });
       Customer.findByEmailOrPhone.mockResolvedValue(null);
-      Customer.create.mockResolvedValue({ id: 10, name: 'C', phone: '+123' });
-      const req = { body: { name: 'C', phone: '+123' }, query: {} };
+      Customer.create.mockResolvedValue({ id: 10, name: 'C', email: 'c@example.com', phone: '+123' });
+      sanitizeString.mockImplementation((v) => (v != null && v !== 'undefined' ? String(v).trim().toLowerCase() : null));
+      const req = { body: validBody, query: {} };
       const res = mockRes();
       await handler(req, res);
       expect(Customer.create).toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(201);
-      expect(res.json).toHaveBeenCalledWith({ id: 10, name: 'C', phone: '+123' });
+      expect(res.json).toHaveBeenCalledWith({ id: 10, name: 'C', email: 'c@example.com', phone: '+123' });
     });
     it('returns 500 on create error', async () => {
       Cafe.getBySlug.mockResolvedValue({ id: 1 });
       Customer.findByEmailOrPhone.mockResolvedValue(null);
       Customer.create.mockRejectedValue(new Error('db'));
-      const req = { body: { name: 'C', phone: '+123' }, query: {} };
+      const req = { body: validBody, query: {} };
       const res = mockRes();
       await handler(req, res);
       expect(res.status).toHaveBeenCalledWith(500);
