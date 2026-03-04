@@ -1,10 +1,26 @@
 /**
  * Send OTP email via Gmail SMTP. Requires SMTP_USER, SMTP_PASS (app password), SMTP_FROM (optional).
+ * Uses templates/email-otp.html when available.
  */
+const fs = require('fs');
+const path = require('path');
 const nodemailer = require('nodemailer');
 const logger = require('../config/logger');
 
 let transporter = null;
+let otpTemplateHtml = null;
+
+function getOtpTemplateHtml() {
+  if (otpTemplateHtml !== null) return otpTemplateHtml;
+  try {
+    const templatePath = path.join(__dirname, '..', 'templates', 'email-otp.html');
+    otpTemplateHtml = fs.readFileSync(templatePath, 'utf8');
+  } catch (err) {
+    logger.warn('Could not load email-otp.html template', { error: err.message });
+    otpTemplateHtml = '';
+  }
+  return otpTemplateHtml;
+}
 
 function getTransporter() {
   if (transporter) return transporter;
@@ -35,9 +51,12 @@ async function sendOtpEmail(to, otp) {
     return { sent: false, error: 'Email service not configured' };
   }
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
-  const subject = process.env.SMTP_OTP_SUBJECT || 'Your login code - Palm Cafe';
+  const subject = process.env.SMTP_OTP_SUBJECT || 'Your verification code';
   const text = `Your verification code is: ${otp}. It is valid for 10 minutes. If you did not request this, please ignore.`;
-  const html = `<p>Your verification code is: <strong>${otp}</strong>.</p><p>It is valid for 10 minutes.</p><p>If you did not request this, please ignore this email.</p>`;
+  const template = getOtpTemplateHtml();
+  const html = template
+    ? template.replace(/\{\{OTP_CODE\}\}/g, otp)
+    : `<p>Your verification code is: <strong>${otp}</strong>.</p><p>It is valid for 10 minutes.</p><p>If you did not request this, please ignore this email.</p>`;
   try {
     await t.sendMail({
       from,
