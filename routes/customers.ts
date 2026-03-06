@@ -183,10 +183,22 @@ export default function registerCustomers(app: Application): void {
 
   app.post('/api/customer/lookup', async (req: Request, res: Response) => {
     try {
-      const { phone, cafeSlug } = req.body as { phone?: string; cafeSlug?: string };
-      const phoneErr = validateRequiredString(phone, 'Phone number');
-      if (phoneErr) {
-        res.status(400).json({ error: phoneErr });
+      const { query, phone, email, cafeSlug } = req.body as {
+        query?: string;
+        phone?: string;
+        email?: string;
+        cafeSlug?: string;
+      };
+      const raw =
+        query != null
+          ? String(query).trim()
+          : phone != null
+            ? String(phone).trim()
+            : email != null
+              ? String(email).trim()
+              : '';
+      if (!raw) {
+        res.status(400).json({ error: 'Phone number or email is required' });
         return;
       }
 
@@ -199,8 +211,17 @@ export default function registerCustomers(app: Application): void {
         logger.warn('[POST /api/customer/lookup] Could not find cafe by slug:', slug);
       }
 
-      const phoneVal = sanitizeString(phone)!;
-      const customer = await Customer.findByEmailOrPhone('', phoneVal, cafeId);
+      const value = sanitizeString(raw) ?? '';
+      const isEmail = value.includes('@') && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+      let customer = null;
+      if (isEmail) {
+        customer = await Customer.findByEmail(value.toLowerCase(), cafeId);
+        if (!customer) {
+          customer = await Customer.findByEmailOrPhone(value.toLowerCase(), value, cafeId);
+        }
+      } else {
+        customer = await Customer.findByEmailOrPhone('', value, cafeId);
+      }
       if (customer) {
         const sanitizedCustomer = {
           id: customer.id,
