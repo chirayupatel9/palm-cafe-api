@@ -41,6 +41,22 @@ function getMenuCafeId(req: Request): number | null {
   return cafeId;
 }
 
+/** Resolve the menu worksheet; sheet tab may differ by case or spacing from Excel exports. */
+function findMenuItemsSheet(workbook: XLSX.WorkBook): XLSX.WorkSheet | undefined {
+  const sheets = workbook.Sheets;
+  if (sheets['Menu Items']) {
+    return sheets['Menu Items'];
+  }
+  const names = workbook.SheetNames || [];
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    if (name.trim().toLowerCase() === 'menu items') {
+      return sheets[name];
+    }
+  }
+  return undefined;
+}
+
 export default function registerMenu(app: Application): void {
   app.get('/api/categories', auth, async (req: Request, res: Response) => {
     try {
@@ -479,7 +495,7 @@ export default function registerMenu(app: Application): void {
         });
       }
       const workbook = XLSX.read(req.file.buffer as Buffer, { type: 'buffer' });
-      const menuSheet = workbook.Sheets['Menu Items'];
+      const menuSheet = findMenuItemsSheet(workbook);
       if (!menuSheet) {
         return res.status(400).json({ error: 'Menu Items sheet not found in Excel file' });
       }
@@ -725,7 +741,10 @@ export default function registerMenu(app: Application): void {
             error: 'Failed to read Excel file. Please ensure the file is a valid Excel (.xlsx) file.'
           });
         }
-        const menuSheet = workbook.Sheets['Menu Items'] || workbook.Sheets[workbook.SheetNames[0]];
+        let menuSheet = findMenuItemsSheet(workbook);
+        if (!menuSheet && workbook.SheetNames && workbook.SheetNames.length > 0) {
+          menuSheet = workbook.Sheets[workbook.SheetNames[0]];
+        }
         if (!menuSheet) {
           return res.status(400).json({ error: 'Menu Items sheet not found in Excel file.' });
         }
