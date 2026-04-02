@@ -433,41 +433,89 @@ export default function registerMenu(app: Application): void {
         });
       }
       const menuItems = await MenuItem.getAll(cafeId);
-      if (!menuItems || menuItems.length === 0) {
-        return res.status(404).json({
-          error: 'No menu items found for this cafe. Please add menu items before exporting.'
-        });
-      }
       const allCategories = await Category.getAll(cafeId);
-      const usedCategoryIds = new Set(menuItems.map((item) => item.category_id).filter(Boolean));
-      const categories = allCategories.filter((cat) => usedCategoryIds.has(cat.id));
       const workbook = XLSX.utils.book_new();
-      const menuData = menuItems.map((item) => {
-        let imageFilename = '';
-        if (item.image_url) {
-          imageFilename = path.basename(item.image_url);
+
+      /** Same column keys as POST /api/menu/import (sheet_to_json row keys). */
+      const importTemplateExamples = [
+        {
+          Category: 'Beverages',
+          'Item Name': 'Example: House Coffee',
+          Description: 'Optional. Short text shown on the menu.',
+          Price: 3.5,
+          Image: 'Optional: https://... or /images/... or filename.jpg (use Import ZIP for local image files)',
+          'Sort Order': 1
+        },
+        {
+          Category: 'Pastries',
+          'Item Name': 'Example: Blueberry Muffin',
+          Description: '',
+          Price: 2.75,
+          Image: '',
+          'Sort Order': 2
         }
-        return {
-          Category: item.category_name || 'Uncategorized',
-          'Item Name': item.name,
-          Description: item.description || '',
-          Price: item.price,
-          Image: imageFilename,
-          'Sort Order': item.sort_order || 0
-        };
-      });
+      ];
+
+      const hasItems = menuItems && menuItems.length > 0;
+      const instructionRows = [
+        { Topic: 'Importing this file', Detail: 'Use Menu → Import Excel. This workbook includes a sheet named: Menu Items' },
+        { Topic: 'Required columns', Detail: 'Category, Item Name, Price (positive number)' },
+        { Topic: 'Optional columns', Detail: 'Description, Image, Sort Order (number; default 0)' },
+        { Topic: 'Categories', Detail: 'New category names are created on import. Existing names match your cafe categories.' },
+        { Topic: 'Image (Excel only)', Detail: 'URL (https://...) or path starting with /. For local files use Import ZIP with an images folder.' },
+        {
+          Topic: 'Empty menu export',
+          Detail: hasItems
+            ? 'Menu Items lists your current data in import-ready columns. Edit and re-import as needed.'
+            : 'Menu Items includes two example rows — replace with your items or add rows below, then import.'
+        }
+      ];
+      const instructionsSheet = XLSX.utils.json_to_sheet(instructionRows);
+      XLSX.utils.book_append_sheet(workbook, instructionsSheet, 'Import instructions');
+
+      let menuData: Record<string, unknown>[];
+      if (hasItems) {
+        menuData = menuItems.map((item) => {
+          let imageFilename = '';
+          if (item.image_url) {
+            imageFilename = path.basename(item.image_url);
+          }
+          return {
+            Category: item.category_name || 'Uncategorized',
+            'Item Name': item.name,
+            Description: item.description || '',
+            Price: item.price,
+            Image: imageFilename,
+            'Sort Order': item.sort_order || 0
+          };
+        });
+      } else {
+        menuData = importTemplateExamples.map((row) => ({ ...row }));
+      }
+
       const menuWorksheet = XLSX.utils.json_to_sheet(menuData);
       XLSX.utils.book_append_sheet(workbook, menuWorksheet, 'Menu Items');
-      const categoryData = categories.map((cat) => ({
-        'Category Name': cat.name,
-        Description: cat.description || '',
-        'Sort Order': cat.sort_order || 0
-      }));
+
+      const usedCategoryIds =
+        menuItems && menuItems.length > 0 ? new Set(menuItems.map((item) => item.category_id).filter(Boolean)) : null;
+      const categories =
+        usedCategoryIds && usedCategoryIds.size > 0
+          ? allCategories.filter((cat) => usedCategoryIds.has(cat.id))
+          : allCategories;
+      const categoryData =
+        categories.length > 0
+          ? categories.map((cat) => ({
+              'Category Name': cat.name,
+              Description: cat.description || '',
+              'Sort Order': cat.sort_order || 0
+            }))
+          : [{ 'Category Name': 'Example Category', Description: 'Reference only — not required for Menu Items import', 'Sort Order': 0 }];
       const categoryWorksheet = XLSX.utils.json_to_sheet(categoryData);
       XLSX.utils.book_append_sheet(workbook, categoryWorksheet, 'Categories');
+
       const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', 'attachment; filename=palm-cafe-menu.xlsx');
+      res.setHeader('Content-Disposition', 'attachment; filename=palm-cafe-menu-import-template.xlsx');
       res.send(buffer);
     } catch (error) {
       logger.error('Error exporting menu:', error as Error);
