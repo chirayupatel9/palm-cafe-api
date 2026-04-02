@@ -57,6 +57,16 @@ function findMenuItemsSheet(workbook: XLSX.WorkBook): XLSX.WorkSheet | undefined
   return undefined;
 }
 
+function menuImportResultMessage(successCount: number, failureCount: number, rowParseErrorCount: number): string {
+  if (successCount === 0 && failureCount === 0 && rowParseErrorCount > 0) {
+    return `No items were imported. ${rowParseErrorCount} row(s) had errors — fix your sheet and try again.`;
+  }
+  if (successCount === 0 && failureCount === 0) {
+    return 'No items were imported.';
+  }
+  return `Import completed. ${successCount} items imported successfully, ${failureCount} failed.`;
+}
+
 export default function registerMenu(app: Application): void {
   app.get('/api/categories', auth, async (req: Request, res: Response) => {
     try {
@@ -633,12 +643,13 @@ export default function registerMenu(app: Application): void {
           errors.push(`Row ${rowNumber}: ${(err as Error).message}`);
         }
       }
+      const rowParseErrorCount = errors.length;
       const importResults = await MenuItem.bulkImport(itemsToImport);
       const successCount = importResults.filter((r) => r.success).length;
       const failureCount = importResults.filter((r) => !r.success).length;
       const allErrors = errors.concat(importResults.filter((r) => !r.success).map((r) => r.error).filter((e): e is string => e != null));
       res.json({
-        message: `Import completed. ${successCount} items imported successfully, ${failureCount} failed.`,
+        message: menuImportResultMessage(successCount, failureCount, rowParseErrorCount),
         successCount,
         failureCount,
         errors: allErrors.length > 0 ? allErrors : undefined,
@@ -905,6 +916,7 @@ export default function registerMenu(app: Application): void {
             errors.push(`Row ${rowNumber}: ${(err as Error).message}`);
           }
         }
+        const rowParseErrorCount = errors.length;
         const importResults = await MenuItem.bulkImport(itemsToImport);
         const successCount = importResults.filter((r) => r.success).length;
         const failureCount = importResults.filter((r) => !r.success).length;
@@ -912,7 +924,7 @@ export default function registerMenu(app: Application): void {
           errors.push(`Failed to create item "${(err as { item?: { name?: string } }).item?.name || 'unknown'}": ${err.error}`);
         });
         res.json({
-          message: `Import completed. ${successCount} items imported successfully, ${failureCount} failed.`,
+          message: menuImportResultMessage(successCount, failureCount, rowParseErrorCount),
           successCount,
           failureCount,
           imageStats: { attached: imageStats.attached, missing: imageStats.missing, invalid: imageStats.invalid },

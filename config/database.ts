@@ -2,6 +2,7 @@ import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import logger from './logger';
 import dotenv from 'dotenv';
+import { ensureCategoryCafeScopedUnique } from '../lib/ensureCategoryCafeScopedUnique';
 dotenv.config();
 
 interface DbConfig {
@@ -117,6 +118,7 @@ export const initializeDatabase = async (): Promise<void> => {
       );
       logger.info('Default admin user created');
     }
+    await ensureCategoryCafeScopedUnique(pool);
     logger.info('Database initialized successfully');
   } catch (error) {
     logger.error('Error initializing database', { message: (error as Error).message });
