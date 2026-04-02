@@ -1220,12 +1220,67 @@ export default function registerSuperadmin(app: Application): void {
     }
   });
 
+  /**
+   * Reset password for a Super Admin account. Requires the acting superadmin's current password.
+   * Other roles continue to use PUT /api/superadmin/users/:id with { password } (no actor check).
+   */
+  app.post('/api/superadmin/users/:id/reset-superadmin-password', auth, requireSuperAdmin, async (req: Request, res: Response) => {
+    try {
+      const targetId = parseInt(req.params.id as string, 10);
+      if (!Number.isInteger(targetId) || targetId < 1) {
+        return res.status(400).json({ error: 'Invalid user id' });
+      }
+      const body = req.body as { newPassword?: string; actorPassword?: string };
+      const newPassword = body.newPassword != null ? String(body.newPassword).trim() : '';
+      const actorPassword = body.actorPassword != null ? String(body.actorPassword) : '';
+
+      if (!newPassword || newPassword.length < 6) {
+        return res.status(400).json({ error: 'New password must be at least 6 characters' });
+      }
+      if (!actorPassword) {
+        return res.status(400).json({ error: 'Your current password is required to confirm this action' });
+      }
+
+      const actorId = req.user!.id;
+      const actorHash = await User.getPasswordHashById(actorId);
+      if (!actorHash || !(await bcrypt.compare(actorPassword, actorHash))) {
+        return res.status(403).json({ error: 'Your password is incorrect' });
+      }
+
+      const target = await User.findById(targetId);
+      if (!target) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      if (target.role !== 'superadmin') {
+        return res.status(400).json({
+          error: 'This endpoint is only for Super Admin accounts. Use Manage user for other roles.'
+        });
+      }
+
+      const hashed = await bcrypt.hash(newPassword, 10);
+      await pool.execute('UPDATE users SET password = ?, updated_at = NOW() WHERE id = ?', [hashed, targetId]);
+      const updatedUser = await User.findByIdWithCafe(targetId);
+      logger.info('Superadmin password reset by peer', { targetUserId: targetId, actorUserId: actorId });
+      res.json({ message: 'Super Admin password updated successfully', user: updatedUser });
+    } catch (error) {
+      logger.error('Error resetting superadmin password:', error as Error);
+      res.status(500).json({ error: 'Failed to reset password' });
+    }
+  });
+
   // Update user (Super Admin only)
   app.put('/api/superadmin/users/:id', auth, requireSuperAdmin, async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      const body = req.body as { username?: string; email?: string; role?: string; cafe_id?: number | null; is_active?: boolean };
-      const { username, email, role, cafe_id, is_active } = body;
+      const body = req.body as {
+        username?: string;
+        email?: string;
+        role?: string;
+        cafe_id?: number | null;
+        is_active?: boolean;
+        password?: string;
+      };
+      const { username, email, role, cafe_id, is_active, password } = body;
 
       const user = await User.findById(parseInt(id, 10));
       if (!user) {
@@ -1237,6 +1292,18 @@ export default function registerSuperadmin(app: Application): void {
 
       const updates: string[] = [];
       const params: unknown[] = [];
+
+      if (password !== undefined && String(password).trim().length > 0) {
+        if (user.role === 'superadmin') {
+          return res.status(400).json({ error: 'Cannot reset password for Super Admin users' });
+        }
+        if (String(password).length < 6) {
+          return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+        }
+        const hashedPassword = await bcrypt.hash(password, 10);
+        updates.push('password = ?');
+        params.push(hashedPassword);
+      }
 
       if (username !== undefined) {
         updates.push('username = ?');

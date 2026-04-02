@@ -49,6 +49,16 @@ class User {
     return (rows[0] as UserRow) || null;
   }
 
+  /** For verifying the logged-in user before sensitive superadmin actions */
+  static async getPasswordHashById(id: number): Promise<string | null> {
+    const [rows] = await pool.execute<RowDataPacket[]>('SELECT password FROM users WHERE id = ?', [id]);
+    if (!rows.length) {
+      return null;
+    }
+    const p = (rows[0] as RowDataPacket).password;
+    return p != null ? String(p) : null;
+  }
+
   static async findById(id: number): Promise<UserRow | null> {
     const [columns] = await pool.execute<RowDataPacket[]>(
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'cafe_id'`
