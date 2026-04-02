@@ -15,8 +15,10 @@ import { responseHelpersMiddleware } from './middleware/responseHelpers';
 import { requestDurationLogger } from './middleware/requestDurationLogger';
 import { publicImagesDir } from './config/paths';
 import registerRoutes from './routes';
+import { createCorsOptions } from './config/cors';
 
 const app = express();
+const corsOptions = createCorsOptions();
 const PORT = Number(process.env.PORT) || 5000;
 const HOST = process.env.HOST || '0.0.0.0';
 
@@ -29,25 +31,8 @@ app.use(
 app.use(requestIdMiddleware);
 app.use(responseHelpersMiddleware);
 app.use(requestDurationLogger);
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      const allowedOrigins = [
-        'https://app.cafe.nevyaa.com',
-        process.env.FRONTEND_URL,
-        process.env.ADMIN_URL,
-        ...(process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test' ? ['http://localhost:3000', 'http://localhost:3001'] : [])
-      ].filter(Boolean);
-      if (allowedOrigins.indexOf(origin) !== -1) return callback(null, true);
-      return callback(null, false);
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Request-ID']
-  })
-);
-app.options('*', cors());
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(generalLimiter);
 app.use(morgan('combined', { stream: { write: (msg: string) => logger.http(msg.trim()) } }));
 app.use((req, _res, next) => {
