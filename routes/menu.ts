@@ -582,36 +582,22 @@ export default function registerMenu(app: Application): void {
           let categoryId: number | null = categoryMap[categoryName.toLowerCase()] ?? null;
           if (categoryName && !categoryId) {
             try {
-              const created = await Category.create({
-                name: categoryName,
-                description: '',
-                sort_order: categories.length + 1,
-                cafe_id: cafeId
-              });
-              categoryId = created.id;
+              const nextSort = categories.length + 1;
+              const resolved = await Category.createOrResolveForCafe(categoryName, cafeId, nextSort);
+              categoryId = resolved.id;
               categoryMap[categoryName.toLowerCase()] = categoryId;
-              categories.push(created as unknown as import('../models/category').CategoryRow & { id: number });
-            } catch (catError) {
-              if ((catError as Error).message.includes('Duplicate entry') || (catError as Error).message.includes('UNIQUE constraint')) {
-                const [existing] = await pool.execute(
-                  'SELECT id, name, is_active FROM categories WHERE name = ? AND cafe_id = ? LIMIT 1',
-                  [categoryName, cafeId]
-                ) as [RowDataPacket[], unknown];
-                const ex = existing as (RowDataPacket & { id: number; is_active?: number })[];
-                if (ex.length > 0) {
-                  categoryId = ex[0].id;
-                  categoryMap[categoryName.toLowerCase()] = categoryId;
-                  if (!ex[0].is_active) {
-                    await pool.execute('UPDATE categories SET is_active = TRUE WHERE id = ?', [categoryId]);
-                  }
-                } else {
-                  errors.push(`Row ${rowNumber}: Category "${categoryName}" already exists but couldn't be found for this cafe`);
-                  continue;
-                }
-              } else {
-                errors.push(`Row ${rowNumber}: Failed to create category "${categoryName}": ${(catError as Error).message}`);
-                continue;
+              if (resolved.wasNew) {
+                categories.push({
+                  id: resolved.id,
+                  name: categoryName.trim(),
+                  description: '',
+                  sort_order: nextSort,
+                  is_active: true
+                } as import('../models/category').CategoryRow & { id: number });
               }
+            } catch (catError) {
+              errors.push(`Row ${rowNumber}: Failed to create category "${categoryName}": ${(catError as Error).message}`);
+              continue;
             }
           } else if (!categoryName) {
             errors.push(`Row ${rowNumber}: Category is required. Please provide a category name.`);
@@ -836,36 +822,22 @@ export default function registerMenu(app: Application): void {
             let categoryId: number | null = categoryMap[categoryName.toLowerCase()] ?? null;
             if (categoryName && !categoryId) {
               try {
-                const created = await Category.create({
-                  name: categoryName,
-                  description: '',
-                  sort_order: categories.length + 1,
-                  cafe_id: cafeId
-                });
-                categoryId = created.id;
+                const nextSort = categories.length + 1;
+                const resolved = await Category.createOrResolveForCafe(categoryName, cafeId, nextSort);
+                categoryId = resolved.id;
                 categoryMap[categoryName.toLowerCase()] = categoryId;
-                categories.push(created as unknown as import('../models/category').CategoryRow & { id: number });
-              } catch (catError) {
-                if ((catError as Error).message.includes('Duplicate entry') || (catError as Error).message.includes('UNIQUE constraint')) {
-                  const [existing] = await pool.execute(
-                    'SELECT id, name, is_active FROM categories WHERE name = ? AND cafe_id = ? LIMIT 1',
-                    [categoryName, cafeId]
-                  ) as [RowDataPacket[], unknown];
-                  const ex = existing as (RowDataPacket & { id: number; is_active?: number })[];
-                  if (ex.length > 0) {
-                    categoryId = ex[0].id;
-                    categoryMap[categoryName.toLowerCase()] = categoryId;
-                    if (!ex[0].is_active) {
-                      await pool.execute('UPDATE categories SET is_active = TRUE WHERE id = ?', [categoryId]);
-                    }
-                  } else {
-                    errors.push(`Row ${rowNumber}: Category "${categoryName}" already exists but couldn't be found for this cafe`);
-                    continue;
-                  }
-                } else {
-                  errors.push(`Row ${rowNumber}: Failed to create category "${categoryName}": ${(catError as Error).message}`);
-                  continue;
+                if (resolved.wasNew) {
+                  categories.push({
+                    id: resolved.id,
+                    name: categoryName.trim(),
+                    description: '',
+                    sort_order: nextSort,
+                    is_active: true
+                  } as import('../models/category').CategoryRow & { id: number });
                 }
+              } catch (catError) {
+                errors.push(`Row ${rowNumber}: Failed to create category "${categoryName}": ${(catError as Error).message}`);
+                continue;
               }
             } else if (!categoryName) {
               errors.push(`Row ${rowNumber}: Category is required.`);

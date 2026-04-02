@@ -1,5 +1,9 @@
 import { pool } from '../config/database';
 import { RowDataPacket } from 'mysql2';
+import type { Pool } from 'mysql2/promise';
+
+/** Pool or transaction connection — both support .execute */
+type SqlExecutor = Pick<Pool, 'execute'>;
 
 export interface CategoryRow {
   id: number;
@@ -108,6 +112,69 @@ class Category {
       };
     } catch (error) {
       throw new Error(`Error creating category: ${(error as Error).message}`);
+    }
+  }
+
+  /** MySQL / SQLite-style unique violations surfaced through wrapped Error messages */
+  static isUniqueConstraintError(error: unknown): boolean {
+    const m = String((error as Error)?.message || '');
+    return (
+      m.includes('Duplicate entry') ||
+      m.includes('UNIQUE constraint') ||
+      m.includes('uq_categories_cafe_id_name') ||
+      /duplicate key value/i.test(m)
+    );
+  }
+
+  /**
+   * Look up a category for this cafe by exact name (trimmed).
+   * Pass `executor` when calling inside a transaction.
+   */
+  static async findByNameAndCafeId(
+    name: string,
+    cafeId: number,
+    executor: SqlExecutor = pool
+  ): Promise<{ id: number; is_active: boolean } | null> {
+    const [rows] = await executor.execute<RowDataPacket[]>(
+      'SELECT id, is_active FROM categories WHERE name = ? AND cafe_id = ? LIMIT 1',
+      [name.trim(), cafeId]
+    );
+    if (!rows.length) {
+      return null;
+    }
+    const r = rows[0] as RowDataPacket;
+    return { id: r.id as number, is_active: Boolean(r.is_active) };
+  }
+
+  /**
+   * Menu import: create category or reuse existing row for this cafe after UNIQUE(cafe_id, name) hit.
+   * With UNIQUE(cafe_id, name), duplicates only match the same cafe (see ensureCategoryCafeScopedUnique startup migration).
+   */
+  static async createOrResolveForCafe(
+    name: string,
+    cafeId: number,
+    sortOrder: number
+  ): Promise<{ id: number; wasNew: boolean }> {
+    try {
+      const created = await Category.create({
+        name,
+        description: '',
+        sort_order: sortOrder,
+        cafe_id: cafeId
+      });
+      return { id: created.id, wasNew: true };
+    } catch (e) {
+      if (!Category.isUniqueConstraintError(e)) {
+        throw e;
+      }
+      const found = await Category.findByNameAndCafeId(name, cafeId);
+      if (!found) {
+        throw e;
+      }
+      if (!found.is_active) {
+        await pool.execute('UPDATE categories SET is_active = TRUE WHERE id = ?', [found.id]);
+      }
+      return { id: found.id, wasNew: false };
     }
   }
 
@@ -315,18 +382,49 @@ class Category {
             } else {
               insertQuery += ') VALUES (?, ?, ?, TRUE)';
             }
-            const [result] = await connection.execute<RowDataPacket[] & { insertId: number }>(
-              insertQuery,
-              insertParams
-            );
-            generatedCategories.push({
-              id: result.insertId,
-              name: nameTrimmed,
-              description: (menuCategory.category_description as string) || '',
-              sort_order: (menuCategory.sort_order as number) || 0,
-              is_active: true,
-              item_count: menuCategory.item_count as number
-            });
+            try {
+              const [result] = await connection.execute<RowDataPacket[] & { insertId: number }>(
+                insertQuery,
+                insertParams
+              );
+              generatedCategories.push({
+                id: result.insertId,
+                name: nameTrimmed,
+                description: (menuCategory.category_description as string) || '',
+                sort_order: (menuCategory.sort_order as number) || 0,
+                is_active: true,
+                item_count: menuCategory.item_count as number
+              });
+              existingCategoryMap[nameTrimmed] = {
+                id: result.insertId,
+                name: nameTrimmed,
+                is_active: true
+              };
+            } catch (insertErr) {
+              if (!hasCafeId || !cafeId || !Category.isUniqueConstraintError(insertErr)) {
+                throw insertErr;
+              }
+              const found = await Category.findByNameAndCafeId(nameTrimmed, cafeId, connection);
+              if (!found) {
+                throw insertErr;
+              }
+              if (!found.is_active) {
+                await connection.execute('UPDATE categories SET is_active = TRUE WHERE id = ?', [found.id]);
+              }
+              existingCategoryMap[nameTrimmed] = {
+                id: found.id,
+                name: nameTrimmed,
+                is_active: true
+              };
+              generatedCategories.push({
+                id: found.id,
+                name: nameTrimmed,
+                description: (menuCategory.category_description as string) || '',
+                sort_order: (menuCategory.sort_order as number) || 0,
+                is_active: true,
+                item_count: menuCategory.item_count as number
+              });
+            }
           }
         }
       }
