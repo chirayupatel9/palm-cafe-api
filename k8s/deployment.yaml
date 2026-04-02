@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: palm-cafe-api
+  namespace: palm-cafe
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: palm-cafe-api
+  template:
+    metadata:
+      labels:
+        app: palm-cafe-api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/owner/palm-cafe-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: palm-cafe-api-config
+            - secretRef:
+                name: palm-cafe-api-secrets
+          readinessProbe:
+            httpGet:
+              path: /api/readiness
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 5000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
