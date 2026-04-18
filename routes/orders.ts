@@ -1,6 +1,7 @@
 import { Application, Request, Response } from 'express';
-import Order from '../models/order';
+import Order, { OrderRow } from '../models/order';
 import Customer from '../models/customer';
+import CafeSettings from '../models/cafeSettings';
 import Cafe from '../models/cafe';
 import MenuItem from '../models/menuItem';
 import TaxSettings from '../models/taxSettings';
@@ -22,6 +23,75 @@ import logger from '../config/logger';
 
 const getWsManager = (): { broadcastOrderStatusUpdate: (o: unknown) => void; broadcastNewOrder: (o: unknown) => void } | undefined =>
   (typeof global !== 'undefined' && (global as { wsManager?: unknown }).wsManager) as { broadcastOrderStatusUpdate: (o: unknown) => void; broadcastNewOrder: (o: unknown) => void } | undefined;
+
+function moneyAmount(n: number | string | null | undefined): string {
+  return (Number(n) || 0).toFixed(2);
+}
+
+/**
+ * Plain-text receipt for thermal printers (narrow monospace layout).
+ */
+function formatThermalOrderText(order: OrderRow, cafeName: string): string {
+  const width = 42;
+  const divider = '-'.repeat(width);
+  const centerLine = (s: string) => {
+    const t = String(s || '').trim();
+    if (t.length >= width) return t.slice(0, width);
+    const pad = width - t.length;
+    const left = Math.floor(pad / 2);
+    return ' '.repeat(left) + t + ' '.repeat(pad - left);
+  };
+  const row = (left: string, right: string) => {
+    const r = String(right);
+    const maxLeft = Math.max(0, width - r.length - 1);
+    let l = String(left || '');
+    if (l.length > maxLeft) l = l.slice(0, Math.max(0, maxLeft - 2)) + '..';
+    const spaces = width - l.length - r.length;
+    return l + (spaces > 0 ? ' '.repeat(spaces) : ' ') + r;
+  };
+
+  const lines: string[] = [];
+  lines.push(centerLine(cafeName || 'Cafe'));
+  lines.push(centerLine(`Order ${order.order_number || ''}`));
+  lines.push(divider);
+  lines.push(row('Status', String(order.status || '')));
+  if (order.customer_name) lines.push(row('Customer', String(order.customer_name).slice(0, 22)));
+  if (order.table_number != null && order.table_number !== undefined) {
+    lines.push(row('Table', String(order.table_number)));
+  }
+  lines.push(divider);
+  for (const item of order.items || []) {
+    const qty = `${item.quantity}x`;
+    const name = String(item.name || 'Item');
+    const lineTotal =
+      item.total != null
+        ? Number(item.total)
+        : (Number(item.price) || 0) * (Number(item.quantity) || 0);
+    lines.push(row(`${qty} ${name}`, moneyAmount(lineTotal)));
+  }
+  lines.push(divider);
+  lines.push(row('Subtotal', moneyAmount(order.total_amount)));
+  lines.push(row('Tax', moneyAmount(order.tax_amount)));
+  if (Number(order.tip_amount) > 0) lines.push(row('Tip', moneyAmount(order.tip_amount)));
+  if (order.points_redeemed > 0) {
+    const disc = (order.points_redeemed * 0.1).toFixed(2);
+    lines.push(row(`Points (${order.points_redeemed})`, `-${disc}`));
+  }
+  if (Number(order.extra_charge) > 0) lines.push(row('Extra', moneyAmount(order.extra_charge)));
+  lines.push(divider);
+  lines.push(row('TOTAL', moneyAmount(order.final_amount)));
+  lines.push(divider);
+  if (order.payment_method) lines.push(row('Payment', String(order.payment_method)));
+  if (order.split_payment) {
+    lines.push(row('Split', String(order.split_payment_method || '')));
+    lines.push(row('Split amt', moneyAmount(order.split_amount)));
+  }
+  if (order.notes) lines.push(row('Notes', String(order.notes).slice(0, Math.max(0, width - 7))));
+  lines.push(divider);
+  lines.push(centerLine('Thank you'));
+
+  return `${lines.join('\n')}\n`;
+}
 
 export default function registerOrders(app: Application): void {
   app.get(
@@ -309,6 +379,39 @@ export default function registerOrders(app: Application): void {
       } catch (error) {
         logger.error('Error updating order status:', error as Error);
         res.status(500).json({ error: 'Failed to update order status' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/orders/:id/print',
+    auth,
+    requireActiveSubscription,
+    requireOrderCafeScope,
+    async (req: Request, res: Response) => {
+      try {
+        const cafeId = getOrderCafeId(req);
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isFinite(id) || id <= 0) {
+          res.status(400).json({ error: 'Invalid order id' });
+          return;
+        }
+
+        const order = await Order.getById(id, cafeId);
+        if (!order) {
+          res.status(404).json({ error: 'Order not found' });
+          return;
+        }
+
+        const settings = await CafeSettings.getCurrent(cafeId);
+        const cafeName = (settings?.cafe_name as string) || 'Cafe';
+        const body = formatThermalOrderText(order, cafeName);
+
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.send(body);
+      } catch (error) {
+        logger.error('Error building order print text:', error as Error);
+        res.status(500).json({ error: 'Failed to build print content' });
       }
     }
   );
