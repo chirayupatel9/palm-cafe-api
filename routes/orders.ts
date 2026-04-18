@@ -14,6 +14,7 @@ import {
 } from './helpers';
 import { auth, adminAuth, chefAuth } from '../middleware/auth';
 import { requireActiveSubscription } from '../middleware/subscriptionAuth';
+import * as subscriptionService from '../services/subscriptionService';
 import {
   isMalformedString,
   validateRequiredString,
@@ -91,6 +92,74 @@ function formatThermalOrderText(order: OrderRow, cafeName: string): string {
   lines.push(centerLine('Thank you'));
 
   return `${lines.join('\n')}\n`;
+}
+
+/**
+ * Subscription must match the cafe that owns the order (supports superadmin without user.cafe_id).
+ */
+async function assertSubscriptionForOrderPrint(cafeId: number | null, res: Response): Promise<boolean> {
+  if (cafeId == null || !Number.isFinite(Number(cafeId)) || Number(cafeId) <= 0) {
+    res.status(400).json({
+      error: 'Cafe ID is required',
+      code: 'CAFE_ID_REQUIRED'
+    });
+    return false;
+  }
+  const idNum = Number(cafeId);
+  const subscription = await subscriptionService.getCafeSubscription(idNum);
+  if (!subscription) {
+    res.status(404).json({
+      error: 'Cafe not found',
+      code: 'CAFE_NOT_FOUND'
+    });
+    return false;
+  }
+  if (subscription.status !== subscriptionService.STATUSES.ACTIVE) {
+    res.status(403).json({
+      error: `Subscription is ${subscription.status}. Please activate your subscription to access this feature.`,
+      code: 'SUBSCRIPTION_INACTIVE',
+      subscription_status: subscription.status
+    });
+    return false;
+  }
+  return true;
+}
+
+async function orderPrintHandler(req: Request, res: Response): Promise<void> {
+  try {
+    const cafeId = getOrderCafeId(req);
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: 'Invalid order id' });
+      return;
+    }
+
+    const order = await Order.getById(id, cafeId);
+    if (!order) {
+      res.status(404).json({ error: 'Order not found' });
+      return;
+    }
+
+    const orderCafeIdRaw = (order as OrderRow & { cafe_id?: number | null }).cafe_id;
+    const subCafeId =
+      orderCafeIdRaw != null && orderCafeIdRaw !== undefined && Number(orderCafeIdRaw) > 0
+        ? Number(orderCafeIdRaw)
+        : cafeId;
+
+    if (!(await assertSubscriptionForOrderPrint(subCafeId, res))) {
+      return;
+    }
+
+    const settings = await CafeSettings.getCurrent(subCafeId);
+    const cafeName = (settings?.cafe_name as string) || 'Cafe';
+    const body = formatThermalOrderText(order, cafeName);
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.send(body);
+  } catch (error) {
+    logger.error('Error building order print text:', error as Error);
+    res.status(500).json({ error: 'Failed to build print content' });
+  }
 }
 
 export default function registerOrders(app: Application): void {
@@ -383,38 +452,8 @@ export default function registerOrders(app: Application): void {
     }
   );
 
-  app.post(
-    '/api/orders/:id/print',
-    auth,
-    requireActiveSubscription,
-    requireOrderCafeScope,
-    async (req: Request, res: Response) => {
-      try {
-        const cafeId = getOrderCafeId(req);
-        const id = parseInt(req.params.id, 10);
-        if (!Number.isFinite(id) || id <= 0) {
-          res.status(400).json({ error: 'Invalid order id' });
-          return;
-        }
-
-        const order = await Order.getById(id, cafeId);
-        if (!order) {
-          res.status(404).json({ error: 'Order not found' });
-          return;
-        }
-
-        const settings = await CafeSettings.getCurrent(cafeId);
-        const cafeName = (settings?.cafe_name as string) || 'Cafe';
-        const body = formatThermalOrderText(order, cafeName);
-
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.send(body);
-      } catch (error) {
-        logger.error('Error building order print text:', error as Error);
-        res.status(500).json({ error: 'Failed to build print content' });
-      }
-    }
-  );
+  app.get('/api/orders/:id/print', auth, requireOrderCafeScope, orderPrintHandler);
+  app.post('/api/orders/:id/print', auth, requireOrderCafeScope, orderPrintHandler);
 
   app.put('/api/orders/:id', auth, requireOrderCafeScope, async (req: Request, res: Response) => {
     try {
