@@ -484,3 +484,118 @@ export async function generatePDF(invoice: InvoiceForPdf): Promise<string> {
     doc.end();
   });
 }
+
+export interface ReportPdfInput {
+  cafe_id: number | null;
+  title: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+}
+
+function truncateText(value: string, max: number): string {
+  const s = String(value || '');
+  if (s.length <= max) return s;
+  return s.slice(0, Math.max(0, max - 1)) + '…';
+}
+
+/**
+ * Generate a simple tabular report PDF as base64 string.
+ * Uses PDFKit to avoid heavy HTML rendering for large tables.
+ */
+export async function generateReportPdf(input: ReportPdfInput): Promise<string> {
+  let currencySymbol = '₹';
+  const pdfCafeId = input.cafe_id ?? null;
+
+  try {
+    const currencySettings = await CurrencySettings.getCurrent(pdfCafeId);
+    if (currencySettings && currencySettings.currency_symbol) {
+      const symbol = String(currencySettings.currency_symbol).trim();
+      if (symbol) currencySymbol = symbol;
+    }
+  } catch (error) {
+    logger.error('Error fetching currency settings for report PDF:', error as Error);
+  }
+
+  let cafeSettings: PdfCafeSettings = {
+    cafe_name: 'Cafe',
+    logo_url: null
+  };
+  try {
+    const settings = await CafeSettings.getCurrent(pdfCafeId);
+    if (settings) {
+      cafeSettings = { ...settings, cafe_name: settings.cafe_name ?? 'Cafe' };
+    }
+  } catch (error) {
+    logger.error('Error fetching cafe settings for report PDF:', error as Error);
+  }
+
+  const isWide = (input.columns || []).length > 6;
+  const doc = new PDFDocument({
+    margin: 28,
+    size: 'A4',
+    layout: isWide ? 'landscape' : 'portrait',
+    autoFirstPage: true
+  });
+
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks).toString('base64')));
+
+    const margin = 28;
+    const pageWidth = doc.page.width;
+
+    // Header band
+    doc.rect(0, 0, pageWidth, 64).fill('#153059');
+    doc.fillColor('#ffffff');
+    doc.fontSize(16).font('Helvetica-Bold').text(cafeSettings.cafe_name || 'Cafe', margin, 18, {
+      width: pageWidth - margin * 2
+    });
+    doc.fontSize(12).font('Helvetica').text(truncateText(input.title || 'Report', 120), margin, 40, {
+      width: pageWidth - margin * 2
+    });
+
+    // Table
+    const columns = (input.columns || []).map((c) => String(c));
+    const rows = input.rows || [];
+    const startY = 84;
+    const lineHeight = 14;
+    const tableWidth = pageWidth - margin * 2;
+    const colWidth = columns.length ? tableWidth / columns.length : tableWidth;
+
+    let y = startY;
+    doc.fillColor('#111827');
+    doc.fontSize(9).font('Helvetica-Bold');
+    columns.forEach((c, idx) => {
+      doc.text(truncateText(c, 24), margin + idx * colWidth, y, { width: colWidth, lineBreak: false });
+    });
+    y += lineHeight;
+    doc.moveTo(margin, y - 2).lineTo(pageWidth - margin, y - 2).strokeColor('#e5e7eb').stroke();
+
+    doc.font('Helvetica').fontSize(9);
+    doc.strokeColor('#e5e7eb');
+
+    const formatCell = (v: unknown) => {
+      if (v == null) return '';
+      if (typeof v === 'number') return String(v);
+      const s = String(v);
+      if (/^\d+(\.\d+)?$/.test(s) && (s.includes('.') || s.length > 3)) return `${currencySymbol}${s}`;
+      return s;
+    };
+
+    for (const row of rows) {
+      if (y > doc.page.height - margin - 24) {
+        doc.addPage();
+        y = margin;
+      }
+
+      columns.forEach((c, idx) => {
+        const cell = truncateText(formatCell(row[c]), 40);
+        doc.text(cell, margin + idx * colWidth, y, { width: colWidth, lineBreak: false });
+      });
+      y += lineHeight;
+    }
+
+    doc.end();
+  });
+}
