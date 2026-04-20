@@ -351,8 +351,16 @@ export default function registerMenu(app: Application): void {
           image_url: image_url || null,
           cafe_id: cafeId!
         };
-        const createdItem = await MenuItem.create(newItem);
-        res.status(201).json(createdItem);
+        try {
+          const createdItem = await MenuItem.create(newItem);
+          return res.status(201).json(createdItem);
+        } catch (e) {
+          const msg = (e as Error).message || '';
+          if (msg.includes('Duplicate item name in this category')) {
+            return res.status(409).json({ error: 'Item already exists in this category' });
+          }
+          throw e;
+        }
       } catch (error) {
         logger.error('Error creating menu item:', error as Error);
         res.status(500).json({ error: 'Failed to create menu item' });
@@ -486,16 +494,23 @@ export default function registerMenu(app: Application): void {
       let menuData: Record<string, unknown>[];
       if (hasItems) {
         menuData = menuItems.map((item) => {
-          let imageFilename = '';
+          let imageCell = '';
           if (item.image_url) {
-            imageFilename = path.basename(item.image_url);
+            const s = String(item.image_url).trim();
+            // Keep values importable as-is: URLs and absolute paths.
+            // Only fall back to filename when stored value is neither.
+            if (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('/')) {
+              imageCell = s;
+            } else {
+              imageCell = path.basename(s);
+            }
           }
           return {
             Category: item.category_name || 'Uncategorized',
             'Item Name': item.name,
             Description: item.description || '',
             Price: item.price,
-            Image: imageFilename,
+            Image: imageCell,
             'Sort Order': item.sort_order || 0
           };
         });
@@ -568,6 +583,9 @@ export default function registerMenu(app: Application): void {
       });
       const itemsToImport: { category_id: number; name: string; description: string; price: number; sort_order: number; image_url: string | null; cafe_id: number }[] = [];
       const errors: string[] = [];
+
+      // Detect duplicates within this Excel file before attempting DB inserts.
+      const seenInFile = new Set<string>();
       for (let i = 0; i < menuData.length; i++) {
         const row = menuData[i];
         const rowNumber = i + 2;
@@ -608,6 +626,15 @@ export default function registerMenu(app: Application): void {
             errors.push(`Row ${rowNumber}: Invalid price. Price must be a positive number.`);
             continue;
           }
+
+          const nameKey = String(itemName).trim().toLowerCase();
+          const fileKey = `${categoryId}:${nameKey}`;
+          if (seenInFile.has(fileKey)) {
+            errors.push(`Row ${rowNumber}: Duplicate item in file (same category and name)`);
+            continue;
+          }
+          seenInFile.add(fileKey);
+
           let imageUrl: string | null = null;
           const imageValue = (row['Image'] ?? row['image'] ?? row['IMAGE'] ?? '') as string;
           if (imageValue) {

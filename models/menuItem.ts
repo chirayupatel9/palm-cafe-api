@@ -48,6 +48,38 @@ export interface CategoryWithItems {
 }
 
 class MenuItem {
+  static normalizeNameForDupeCheck(name: string): string {
+    return String(name ?? '').trim().toLowerCase();
+  }
+
+  static async existsDuplicate(
+    categoryId: number,
+    name: string,
+    cafeId: number | null = null
+  ): Promise<boolean> {
+    const normalized = this.normalizeNameForDupeCheck(name);
+    if (!normalized) return false;
+    const hasCafeId = await this.hasCafeIdColumn();
+
+    let query = `
+      SELECT 1
+      FROM menu_items
+      WHERE category_id = ?
+        AND LOWER(TRIM(name)) = ?
+        AND is_available = TRUE
+    `;
+    const params: (number | string)[] = [categoryId, normalized];
+    if (hasCafeId) {
+      if (cafeId == null) throw new Error('cafeId is required when cafe_id column exists');
+      query += ' AND cafe_id = ?';
+      params.push(cafeId);
+    }
+    query += ' LIMIT 1';
+
+    const [rows] = await pool.execute<RowDataPacket[]>(query, params);
+    return rows.length > 0;
+  }
+
   static async getAll(cafeId: number | null = null): Promise<MenuItemRow[]> {
     try {
       const [columns] = await pool.execute<RowDataPacket[]>(`
@@ -192,6 +224,11 @@ class MenuItem {
       `);
       const hasCafeId = columns.length > 0;
       if (hasCafeId && !cafe_id) throw new Error('Cafe ID is required when cafe_id column exists');
+
+      const dup = await this.existsDuplicate(category_id, name, hasCafeId ? cafe_id! : null);
+      if (dup) {
+        throw new Error('Duplicate item name in this category');
+      }
 
       if (hasCafeId) {
         const [result] = await pool.execute<RowDataPacket[] & { insertId: number }>(
@@ -383,11 +420,42 @@ class MenuItem {
       const hasCafeId = columns.length > 0;
       const results: { success: boolean; item?: MenuItemCreateData & { insertId?: number }; error?: string }[] = [];
 
+      // Prevent duplicates within the same upload batch (category + normalized name).
+      const seen = new Set<string>();
+
       for (const item of items) {
         try {
           const { category_id, name, description, price, sort_order, image_url, cafe_id } = item;
           if (!category_id) throw new Error('Category ID is required');
           if (hasCafeId && !cafe_id) throw new Error('Cafe ID is required when cafe_id column exists');
+
+          const nameKey = this.normalizeNameForDupeCheck(name);
+          const cafeKey = hasCafeId ? String(cafe_id) : 'no_cafe';
+          const batchKey = `${cafeKey}:${category_id}:${nameKey}`;
+          if (!nameKey) throw new Error('Item Name is required');
+          if (seen.has(batchKey)) {
+            throw new Error('Duplicate item in upload (same category and name)');
+          }
+          seen.add(batchKey);
+
+          // Check against existing DB rows as well.
+          let existsQuery = `
+            SELECT 1
+            FROM menu_items
+            WHERE category_id = ?
+              AND LOWER(TRIM(name)) = ?
+              AND is_available = TRUE
+          `;
+          const existsParams: (number | string)[] = [category_id, nameKey];
+          if (hasCafeId) {
+            existsQuery += ' AND cafe_id = ?';
+            existsParams.push(cafe_id!);
+          }
+          existsQuery += ' LIMIT 1';
+          const [existsRows] = await connection.execute<RowDataPacket[]>(existsQuery, existsParams);
+          if (existsRows.length > 0) {
+            throw new Error('Duplicate item name in this category');
+          }
 
           let query: string;
           let params: (string | number | null)[];
