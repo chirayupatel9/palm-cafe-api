@@ -28,6 +28,29 @@ export interface InventoryCreateData {
 }
 
 class Inventory {
+  static normalizeForDupeCheck(value: string): string {
+    return String(value ?? '').trim().toLowerCase();
+  }
+
+  static async existsDuplicate(
+    name: string,
+    category: string,
+    cafeId: number | null = null
+  ): Promise<boolean> {
+    const n = this.normalizeForDupeCheck(name);
+    const c = this.normalizeForDupeCheck(category);
+    if (!n || !c) return false;
+    const hasCafeId = cafeId != null;
+
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT 1 FROM inventory
+       WHERE LOWER(TRIM(name)) = ? AND LOWER(TRIM(category)) = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}
+       LIMIT 1`,
+      hasCafeId ? [n, c, cafeId] : [n, c]
+    );
+    return rows.length > 0;
+  }
+
   static async getAll(cafeId: number | null = null): Promise<InventoryRow[]> {
     try {
       const hasCafeId = cafeId != null;
@@ -89,6 +112,12 @@ class Inventory {
         description
       } = inventoryData;
       const hasCafeId = cafeId != null;
+
+      const dup = await this.existsDuplicate(name, category, cafeId);
+      if (dup) {
+        throw new Error('Duplicate inventory item in this category');
+      }
+
       const [result] = await pool.execute<RowDataPacket[] & { insertId: number }>(
         `INSERT INTO inventory (name, category, quantity, unit, cost_per_unit, supplier, reorder_level, description${hasCafeId ? ', cafe_id' : ''})
          VALUES (?, ?, ?, ?, ?, ?, ?, ?${hasCafeId ? ', ?' : ''})`,
@@ -287,24 +316,41 @@ class Inventory {
   static async exportToExcel(cafeId: number | null = null): Promise<{ buffer: Buffer; filename: string }> {
     try {
       const inventory = await this.getAll(cafeId);
-      const excelData = inventory.map((item) => ({
-        ID: item.id,
+      // Keep the first sheet import-ready (same columns as import/template).
+      const importReadyRows = inventory.map((item) => ({
         Name: item.name,
-        Category: item.category,
+        Category: item.category || '',
         Quantity: item.quantity,
         Unit: item.unit,
-        'Cost per Unit': item.cost_per_unit || 0,
+        'Cost per Unit': item.cost_per_unit ?? null,
+        Supplier: item.supplier || '',
+        'Reorder Level': item.reorder_level ?? null,
+        Description: item.description || ''
+      }));
+
+      // Optional extra info in a separate sheet (won't affect import since import reads first sheet).
+      const detailsRows = inventory.map((item) => ({
+        ID: item.id,
+        Name: item.name,
+        Category: item.category || '',
+        Quantity: item.quantity,
+        Unit: item.unit,
+        'Cost per Unit': item.cost_per_unit ?? null,
         'Total Value': (item.quantity * (item.cost_per_unit || 0)).toFixed(2),
         Supplier: item.supplier || '',
-        'Reorder Level': item.reorder_level || 0,
+        'Reorder Level': item.reorder_level ?? null,
         Description: item.description || '',
-        'Created At': new Date(item.created_at!).toLocaleDateString(),
-        'Updated At': new Date(item.updated_at!).toLocaleDateString()
+        'Created At': item.created_at ? new Date(item.created_at).toLocaleDateString() : '',
+        'Updated At': item.updated_at ? new Date(item.updated_at).toLocaleDateString() : ''
       }));
 
       const workbook = XLSX.utils.book_new();
-      const worksheet = XLSX.utils.json_to_sheet(excelData);
-      const columnWidths = [
+      const importSheet = XLSX.utils.json_to_sheet(importReadyRows);
+      importSheet['!cols'] = [{ wch: 25 }, { wch: 15 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 20 }, { wch: 12 }, { wch: 30 }];
+      XLSX.utils.book_append_sheet(workbook, importSheet, 'Inventory Items');
+
+      const detailsSheet = XLSX.utils.json_to_sheet(detailsRows);
+      detailsSheet['!cols'] = [
         { wch: 5 },
         { wch: 25 },
         { wch: 15 },
@@ -318,8 +364,7 @@ class Inventory {
         { wch: 12 },
         { wch: 12 }
       ];
-      worksheet['!cols'] = columnWidths;
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventory');
+      XLSX.utils.book_append_sheet(workbook, detailsSheet, 'Inventory Details');
       const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
       return {
         buffer,
@@ -343,6 +388,7 @@ class Inventory {
       const data = XLSX.utils.sheet_to_json(worksheet as XLSX.WorkSheet) as Record<string, unknown>[];
 
       const results = { total: data.length, successful: 0, failed: 0, errors: [] as { row: number; error: string; data: unknown }[] };
+      const seenInFile = new Set<string>();
 
       for (let i = 0; i < data.length; i++) {
         const row = data[i] as Record<string, unknown>;
@@ -351,13 +397,26 @@ class Inventory {
           if (!row.Name || !row.Category || !row.Unit) {
             throw new Error('Name, Category, and Unit are required');
           }
+          const name = String(row.Name).trim();
+          const category = String(row.Category).trim();
+          const unit = String(row.Unit).trim();
+          const nameKey = this.normalizeForDupeCheck(name);
+          const categoryKey = this.normalizeForDupeCheck(category);
+          const fileKey = `${categoryKey}:${nameKey}`;
+          if (!nameKey || !categoryKey) throw new Error('Name and Category are required');
+          if (seenInFile.has(fileKey)) {
+            throw new Error('Duplicate inventory item in file (same category and name)');
+          }
+          seenInFile.add(fileKey);
+
           const quantity = parseFloat(String(row.Quantity)) || 0;
           const costPerUnit = parseFloat(String(row['Cost per Unit'])) || null;
           const reorderLevel = parseFloat(String(row['Reorder Level'])) || null;
 
           const [existing] = await connection.execute<RowDataPacket[]>(
-            `SELECT id FROM inventory WHERE name = ? AND category = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
-            hasCafeId ? [String(row.Name).trim(), String(row.Category).trim(), cafeId] : [String(row.Name).trim(), String(row.Category).trim()]
+            `SELECT id FROM inventory
+             WHERE LOWER(TRIM(name)) = ? AND LOWER(TRIM(category)) = ? ${hasCafeId ? 'AND cafe_id = ?' : ''}`,
+            hasCafeId ? [nameKey, categoryKey, cafeId] : [nameKey, categoryKey]
           );
 
           if (existing.length > 0) {
@@ -365,7 +424,7 @@ class Inventory {
               `UPDATE inventory SET quantity = ?, unit = ?, cost_per_unit = ?, supplier = ?, reorder_level = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
               [
                 quantity,
-                String(row.Unit).trim(),
+                unit,
                 costPerUnit,
                 row.Supplier ? String(row.Supplier).trim() : null,
                 reorderLevel,
@@ -378,10 +437,10 @@ class Inventory {
               `INSERT INTO inventory (name, category, quantity, unit, cost_per_unit, supplier, reorder_level, description${hasCafeId ? ', cafe_id' : ''}) VALUES (?, ?, ?, ?, ?, ?, ?, ?${hasCafeId ? ', ?' : ''})`,
               hasCafeId
                 ? [
-                    String(row.Name).trim(),
-                    String(row.Category).trim(),
+                    name,
+                    category,
                     quantity,
-                    String(row.Unit).trim(),
+                    unit,
                     costPerUnit,
                     row.Supplier ? String(row.Supplier).trim() : null,
                     reorderLevel,
@@ -389,10 +448,10 @@ class Inventory {
                     cafeId
                   ]
                 : [
-                    String(row.Name).trim(),
-                    String(row.Category).trim(),
+                    name,
+                    category,
                     quantity,
-                    String(row.Unit).trim(),
+                    unit,
                     costPerUnit,
                     row.Supplier ? String(row.Supplier).trim() : null,
                     reorderLevel,
@@ -419,17 +478,25 @@ class Inventory {
 
   static async getImportTemplate(): Promise<{ buffer: Buffer; filename: string }> {
     try {
+      const workbook = XLSX.utils.book_new();
+      const instructionRows = [
+        { Topic: 'Importing this file', Detail: 'Use Inventory → Import Excel. Fill the Inventory Items sheet and upload.' },
+        { Topic: 'Required columns', Detail: 'Name, Category, Unit (Quantity defaults to 0 if empty)' },
+        { Topic: 'Optional columns', Detail: 'Quantity, Cost per Unit, Supplier, Reorder Level, Description' },
+        { Topic: 'Duplicates', Detail: 'Same Category + Name will update the existing row for your cafe (no duplicates created).' }
+      ];
+      const instructionsSheet = XLSX.utils.json_to_sheet(instructionRows);
+      XLSX.utils.book_append_sheet(workbook, instructionsSheet, 'Import instructions');
+
       const templateData = [
         { Name: 'Coffee Beans', Category: 'Beverages', Quantity: 50, Unit: 'kg', 'Cost per Unit': 15.5, Supplier: 'Coffee Supplier Co.', 'Reorder Level': 10, Description: 'Premium Arabica coffee beans' },
         { Name: 'Milk', Category: 'Dairy', Quantity: 20, Unit: 'L', 'Cost per Unit': 2.5, Supplier: 'Dairy Farm Ltd.', 'Reorder Level': 5, Description: 'Fresh whole milk' },
-        { Name: 'Sugar', Category: 'Pantry', Quantity: 15, Unit: 'kg', 'Cost per Unit': 1.2, Supplier: 'Sweet Supplies', 'Reorder Level': 3, Description: 'Granulated white sugar' },
-        { Name: 'Flour', Category: 'Pantry', Quantity: 25, Unit: 'kg', 'Cost per Unit': 1.8, Supplier: 'Bakery Supplies', 'Reorder Level': 8, Description: 'All-purpose flour for baking' },
-        { Name: 'Butter', Category: 'Dairy', Quantity: 10, Unit: 'kg', 'Cost per Unit': 8, Supplier: 'Dairy Farm Ltd.', 'Reorder Level': 4, Description: 'Unsalted butter for cooking and baking' }
+        { Name: 'Sugar', Category: 'Pantry', Quantity: 15, Unit: 'kg', 'Cost per Unit': 1.2, Supplier: 'Sweet Supplies', 'Reorder Level': 3, Description: 'Granulated white sugar' }
       ];
-      const workbook = XLSX.utils.book_new();
-      const worksheet = XLSX.utils.json_to_sheet(templateData);
-      worksheet['!cols'] = [{ wch: 25 }, { wch: 15 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 20 }, { wch: 12 }, { wch: 30 }];
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventory Template');
+      const templateSheet = XLSX.utils.json_to_sheet(templateData);
+      templateSheet['!cols'] = [{ wch: 25 }, { wch: 15 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 20 }, { wch: 12 }, { wch: 30 }];
+      XLSX.utils.book_append_sheet(workbook, templateSheet, 'Inventory Items');
+
       const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
       return { buffer, filename: 'inventory_import_template.xlsx' };
     } catch (error) {

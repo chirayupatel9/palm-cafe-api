@@ -124,6 +124,10 @@ export default function registerInventory(app: Application): void {
 
         res.status(201).json(newItem);
       } catch (error) {
+        if ((error as Error).message === 'Duplicate inventory item in this category') {
+          res.status(409).json({ error: 'Item already exists in this category' });
+          return;
+        }
         logger.error('Error creating inventory item:', error as Error);
         res.status(500).json({ error: 'Failed to create inventory item' });
       }
