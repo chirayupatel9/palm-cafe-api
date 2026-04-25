@@ -22,6 +22,13 @@ export interface TaxUpdateData {
 }
 
 class TaxSettings {
+  static toDbBoolean(value: unknown): boolean {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value === 1;
+    if (typeof value === 'string') return value === '1' || value.toLowerCase() === 'true';
+    return Boolean(value);
+  }
+
   static async getCurrent(cafeId: number | null = null): Promise<TaxSettingsRow> {
     const cacheKey = cafeId != null ? String(cafeId) : '_global';
     if (taxCacheByCafe[cacheKey] && Date.now() < (taxCacheExpiryByCafe[cacheKey] || 0)) {
@@ -53,8 +60,8 @@ class TaxSettings {
         result = {
           ...r,
           tax_rate: parseFloat(String(r.tax_rate)),
-          show_tax_in_menu: Boolean(r.show_tax_in_menu),
-          include_tax: Boolean(r.include_tax)
+          show_tax_in_menu: this.toDbBoolean(r.show_tax_in_menu),
+          include_tax: this.toDbBoolean(r.include_tax)
         } as TaxSettingsRow;
       }
       taxCacheByCafe[cacheKey] = result;
@@ -131,8 +138,8 @@ class TaxSettings {
       return (rows as RowDataPacket[]).map((row: RowDataPacket) => ({
         ...row,
         tax_rate: parseFloat(String(row.tax_rate)),
-        show_tax_in_menu: Boolean(row.show_tax_in_menu),
-        include_tax: Boolean(row.include_tax)
+        show_tax_in_menu: this.toDbBoolean(row.show_tax_in_menu),
+        include_tax: this.toDbBoolean(row.include_tax)
       })) as TaxSettingsRow[];
     } catch (error) {
       throw new Error(`Error fetching tax history: ${(error as Error).message}`);

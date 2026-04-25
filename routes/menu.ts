@@ -968,7 +968,8 @@ export default function registerMenu(app: Application): void {
       const taxSettings = await TaxSettings.getCurrent(cafeId);
       res.json({
         show_tax_in_menu: taxSettings.show_tax_in_menu,
-        tax_rate: taxSettings.tax_rate
+        tax_rate: taxSettings.tax_rate,
+        include_tax: taxSettings.include_tax
       });
     } catch (error) {
       logger.error('Error fetching tax settings for menu:', error as Error);

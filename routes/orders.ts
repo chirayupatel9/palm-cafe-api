@@ -563,12 +563,14 @@ export default function registerOrders(app: Application): void {
             }
           ],
           total_amount: firstItem.price * 2 + secondItem.price,
-          tax_amount: (firstItem.price * 2 + secondItem.price) * 0.085,
           tip_amount: 20.0,
-          final_amount: (firstItem.price * 2 + secondItem.price) * 1.085 + 20.0,
           payment_method: 'cash',
           notes: 'Test order for kitchen display'
         };
+        const testSubtotal = firstItem.price * 2 + secondItem.price;
+        const testTax = await TaxSettings.calculateTax(testSubtotal, cafeId);
+        testOrder.tax_amount = testTax.taxAmount;
+        testOrder.final_amount = testSubtotal + testTax.taxAmount + 20.0;
 
         const newOrder = await Order.create(testOrder);
 
