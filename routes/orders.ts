@@ -541,6 +541,8 @@ export default function registerOrders(app: Application): void {
         const firstItem = menuItems[0];
         const secondItem = menuItems[1] || firstItem;
 
+        const testSubtotal = firstItem.price * 2 + secondItem.price;
+        const testTax = await TaxSettings.calculateTax(testSubtotal, cafeId);
         const testOrder = {
           cafe_id: cafeId,
           customer_name: 'Test Customer',
@@ -562,15 +564,13 @@ export default function registerOrders(app: Application): void {
               total: secondItem.price
             }
           ],
-          total_amount: firstItem.price * 2 + secondItem.price,
+          total_amount: testSubtotal,
+          tax_amount: testTax.taxAmount,
           tip_amount: 20.0,
+          final_amount: testSubtotal + testTax.taxAmount + 20.0,
           payment_method: 'cash',
           notes: 'Test order for kitchen display'
         };
-        const testSubtotal = firstItem.price * 2 + secondItem.price;
-        const testTax = await TaxSettings.calculateTax(testSubtotal, cafeId);
-        testOrder.tax_amount = testTax.taxAmount;
-        testOrder.final_amount = testSubtotal + testTax.taxAmount + 20.0;
 
         const newOrder = await Order.create(testOrder);
 
